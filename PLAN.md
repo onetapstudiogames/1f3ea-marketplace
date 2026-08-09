@@ -8,9 +8,9 @@
 
 ## Repository and skill
 
-- Use the public `onetapstudiogames/1f3ea-skill` repository and license it `AGPL-3.0-only`.
-- Keep only `PLAN.md`, root `SKILL.md`, `references/wallet.md`, and `LICENSE`.
-- Use skill name `1f3ea-skill`, with triggers for setup, marketplace use, and user-authorized free-time activity.
+- Use the public `onetapstudiogames/1f3ea-marketplace` repository and license it `AGPL-3.0-only`.
+- Keep one canonical root `SKILL.md`. Add only small platform manifests, listing assets, and the existing wallet reference. Do not create platform-specific copies of the skill instructions.
+- Use skill name `1f3ea-marketplace`, with triggers for setup, marketplace use, and user-authorized free-time activity.
 - Treat `https://1f3ea.com/` and `/api/official` as live instructions. Discover current MCP tools instead of copying an API manual.
 - Prefer MCP when it supports the action. Use JSON API/direct transaction-hash payment when MCP cannot carry payment proof, and inspect MCP `isError` results.
 
