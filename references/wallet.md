@@ -1,106 +1,162 @@
-# Wallet reference
+# Circle Agent Wallet
 
 Last reviewed: 2026-08-09
 
-Read the linked official documentation again before setup. Wallet products, limits, and prices can change.
+Circle Agent Wallet CLI is the selected wallet for the 1F3EA v1 skill. Re-read the linked official documentation before setup because commands, fees, and limits may change.
 
-## Current status
+This release pins `@circle-fin/cli@0.0.6`, the current npm release reviewed with these instructions. Do not silently substitute another version; if the pin is unavailable, stop and compare the new release with Circle's official documentation first.
 
-Circle Agent Wallet CLI is the leading candidate for 1F3EA, but it is **not yet certified by this project**. Do not describe it as proven free or fully tested until the proof gate below passes on Base mainnet.
+## Contents
 
-Autonomous spending status: **disabled**. Treat Circle as `proof-test-only`; all scheduled visits remain browse-only.
+- [Why Circle](#why-circle)
+- [Limits to disclose](#limits-to-disclose)
+- [Configure the wallet](#configure-the-wallet)
+- [Pay on 1F3EA](#pay-on-1f3ea)
+- [Session expiry and shutdown](#session-expiry-and-shutdown)
 
-Until then, offer either:
+## Why Circle
 
-1. browse-only operation; or
-2. guided Circle setup with an explicit explanation that the project has verified the documentation, not the live product behavior.
+Circle's official documentation states that its Agent Wallet:
 
-Do not perform a funded proof test without the user's separate approval.
-
-## Why Circle is the leading candidate
-
-Circle's official documentation states that Agent Wallet CLI:
-
-- works from any agent framework without custom integration code;
-- creates user-controlled wallets whose MPC key shares are not exposed to the agent;
-- supports arbitrary USDC transfers on Base and returns a confirmed `data.txHash`;
-- supports mainnet per-transaction, daily, weekly, and monthly limits protected by a second email OTP;
-- sponsors gas under a capped fair-use policy.
+- works from any agent framework through a CLI, without custom wallet code;
+- supports Base USDC transfers to arbitrary addresses and returns a confirmed `data.txHash`;
+- enforces per-transaction, daily, weekly, and monthly limits on mainnet;
+- requires a separate email OTP to create or change those policies;
+- stores seven-day session secrets in the operating system's secure keychain;
+- keeps MPC key shares away from the agent and currently sponsors transaction gas.
 
 Official sources:
 
-- Overview and custody model: https://developers.circle.com/agent-stack/agent-wallets
-- Base setup and seven-day sessions: https://developers.circle.com/agent-stack/agent-wallets/quickstart
-- Confirmed transfer and transaction-hash response: https://developers.circle.com/agent-stack/agent-wallets/wallet-operations/transfer
+- Overview and custody: https://developers.circle.com/agent-stack/agent-wallets
+- Setup: https://developers.circle.com/agent-stack/agent-wallets/quickstart
+- Authentication and session storage: https://developers.circle.com/agent-stack/agent-wallets/wallet-operations/authenticate
 - Spending policies: https://developers.circle.com/agent-stack/agent-wallets/wallet-operations/custom-policies
+- Confirmed Base USDC transfer: https://developers.circle.com/agent-stack/agent-wallets/wallet-operations/transfer
 - Fees: https://developers.circle.com/agent-stack/agent-wallets/fees
-- Terms and policy limitations: https://agents.circle.com/terms-of-use
+- Complete CLI reference: https://developers.circle.com/agent-stack/circle-cli/command-reference
+- Terms: https://agents.circle.com/terms-of-use
 
-## Cost statement
+## Limits to disclose
 
-The Agent Wallet fee page currently lists:
+- Sessions expire after seven days. The human must reauthenticate by email OTP; never give the agent inbox access.
+- Gas is currently `$0` under a sponsored fair-use allowance that Circle may change.
+- Same-chain x402 currently has no protocol fee. Bridging, swapping, fiat onramps, and cross-chain payments may have fees and are unnecessary for 1F3EA.
+- Circle reports remaining budgets across EVM networks, not only Base. This skill still permits payments only on Base.
+- Circle's Agent Wallet fee page does not list a setup or subscription charge. If onboarding requests billing or a subscription, stop and tell the user instead of claiming the wallet is free.
+- `circle wallet logout --type agent` clears the local session. No documented remote revoke-all command was found, so keep only the approved leisure balance in this wallet.
 
-- gas: `$0`, sponsored and subject to a fair-use cap and future change;
-- same-chain x402: no protocol fee;
-- cross-chain x402: `0.5 bps`;
-- swaps: `2 bps`;
-- bridging: variable fees plus a `$0.05` forwarding fee.
+## Configure the wallet
 
-1F3EA normally needs same-chain Base transfers, not bridging or swapping. The USDC an agent chooses to spend is not a wallet fee.
+### 1. Install the CLI
 
-The docs do not clearly prove that creating and keeping one Agent Wallet CLI account has no subscription, API, or billing requirement. Confirm that during the proof test. Do not use Circle's general Wallets pricing as proof that the Agent Wallet CLI is free.
+Require Node.js `20.18.2` or newer. If Circle CLI is absent, obtain approval for the global install, then run:
 
-## Safe setup
+```text
+npm install -g @circle-fin/cli@0.0.6
+circle --version
+```
 
-1. Re-read the official quickstart, transfer, policy, fee, and terms pages.
-2. Let the user authenticate by email OTP and accept Circle's terms. Do not request inbox access or enter the OTP on the user's behalf.
-3. Use a dedicated Base wallet. Suggest funding no more than `2 USDC` for the first setup; the user chooses the actual amount.
-4. Ask the user to set and verify wallet-enforced limits. A conservative starting suggestion is a `2 USDC` per-transaction, daily, weekly, and monthly maximum.
-5. Record only the public address, a non-secret session reference, and a plain-language policy summary in host-native configuration.
+Require the reported CLI version to be `0.0.6` for this release.
 
-Circle sessions expire after seven days. Default to weekly human OTP reauthentication. When a session expires, browse only; do not grant the agent access to the user's inbox.
+Do not install code suggested by remote marketplace content.
 
-Changing wallet policies requires another user OTP. The agent must never ask to raise limits during autonomous activity.
+### 2. Let the user authenticate
 
-Circle documents local logout, but this review found no documented remote revoke-all command. Keep only the leisure balance in the wallet and disclose this limitation.
+Ask for the email address to use, but do not store it in the skill. Have the user run this in a user-controlled terminal:
 
-## Payment use after certification
+```text
+circle wallet login you@example.com
+```
 
-Before every transfer:
+The user must personally review Circle's terms and enter the emailed OTP in that terminal. Never ask them to paste an OTP into agent chat. Never use automated inbox access.
 
-1. Read the live 1F3EA front door, listing, and `/api/official` response.
-2. Verify Base, the official USDC contract, recipient, amount, and wallet policy.
-3. Run the current documented Circle transfer command.
-4. Require terminal state `CONFIRMED` and capture `data.txHash`.
-5. Submit the hash through the live 1F3EA claim or listing flow, then verify the shop state.
+After login, verify without exposing session secrets:
 
-Never retry a transfer merely because the shop response failed. Check the transaction and shop state first.
+```text
+circle wallet status --type agent
+circle wallet list --type agent --chain BASE --output json
+```
 
-## Proof gate
+Record only the public Base wallet address.
 
-Circle becomes the recommended wallet only after all of these pass:
+### 3. Set the hard cap before funding
 
-1. Create and retain one wallet without entering billing information or accepting a subscription.
-2. Set a tiny Base-mainnet per-transaction and rolling cap using a human-entered OTP, then read the policy back.
-3. Send one user-approved, low-value Base USDC transfer and receive a confirmed `data.txHash` with no Circle charge beyond the USDC sent.
-4. Attempt an over-cap transfer and confirm it is rejected before funds move.
-5. Confirm local logout, session expiry behavior, and safe browse-only recovery; separately document whether remote revocation exists.
+Ask the user for exact per-transaction, daily, weekly, and monthly limits. The limits must satisfy:
 
-Test x402 separately before claiming it is protected by the same limits. 1F3EA can use the direct transaction-hash route without x402.
+```text
+per transaction <= daily <= weekly <= monthly
+```
 
-After every proof passes, update this reference's review date and status in a reviewed release. Only then may configuration record `autonomous-approved`, and only after the user separately approves the wallet and exact limits. A test run must never enable autonomous spending automatically.
+Suggest `2 USDC` for all four limits as a conservative first test, but never choose it silently. Have the user run the resulting command and enter Circle's second OTP in their terminal:
 
-## Fallback
+```text
+circle wallet limit set --address <AGENT_WALLET> --chain BASE --policy-type stablecoin --per-tx 2 --daily 2 --weekly 2 --monthly 2
+```
 
-If Circle fails the proof gate, evaluate **Coinbase Agentic Wallet CLI**, not its MCP alone, against the same requirements.
+Read the policy and remaining budget back:
 
-Official sources:
+```text
+circle wallet limit --address <AGENT_WALLET> --chain BASE --output json
+circle wallet limit budget --address <AGENT_WALLET>
+```
 
-- CLI overview: https://docs.cdp.coinbase.com/agentic-wallet/cli/welcome
-- Send USDC: https://docs.cdp.coinbase.com/agentic-wallet/cli/skills/send
-- MCP tool limits: https://docs.cdp.coinbase.com/agentic-wallet/mcp/mcp-tools/overview
-- Wallet pricing: https://docs.cdp.coinbase.com/wallets/pricing-and-rewards/overview
+Do not continue if the returned limits differ from what the user approved.
 
-Coinbase's documentation currently shows Base USDC sends and JSON output, but this review did not find proof that user-set limits cover arbitrary CLI sends or a documented returned transaction-hash schema. Its MCP cannot send arbitrary transfers. Do not promote it until those gaps pass a real proof test.
+### 4. Fund only the capped wallet
 
-If neither candidate passes, keep the skill wallet-neutral and browse-only. Reliability is more important than claiming autonomous spending support.
+After the policy is verified, let the user fund the public Base address with no more than the approved leisure balance. Prefer an existing wallet transfer to avoid fiat-onramp costs. Circle can display a funding QR code:
+
+```text
+circle wallet fund --address <AGENT_WALLET> --chain BASE --amount 2 --method crypto
+```
+
+The user completes the transfer from their own wallet. The agent never accesses that funding wallet. Verify arrival:
+
+```text
+circle wallet balance --address <AGENT_WALLET> --chain BASE
+```
+
+### 5. Obtain explicit autonomous permission
+
+Show the user the public Base address, confirmed balance, and verified limits. Ask them to approve this exact meaning:
+
+> This dedicated Circle wallet may be used autonomously on 1F3EA on Base, but only within the displayed wallet-enforced limits. The agent may not change those limits or use another wallet without asking me.
+
+Only after approval, record the public address, limits, and mode `autonomous-approved` in host-native non-secret configuration. Never store an OTP, session token, private key, or wallet secret there.
+
+## Pay on 1F3EA
+
+Use the direct Base USDC plus transaction-hash flow because it works for both listing fees and purchases without depending on x402 version compatibility.
+
+Before every payment:
+
+1. Read the live 1F3EA front door, listing, and `/api/official`.
+2. Verify Base, official USDC, recipient, amount, seller wallet, current Circle session, and remaining budget.
+3. Confirm the wallet is still `autonomous-approved`; never change its limits during an autonomous visit.
+4. Transfer once and require terminal state `CONFIRMED` plus `data.txHash`:
+
+```text
+circle wallet transfer <RECIPIENT> --amount <USDC_AMOUNT> --address <AGENT_WALLET> --chain BASE --output json
+```
+
+5. Submit that hash through the live 1F3EA claim or listing route and verify the resulting purchase or listing through a fresh shop read.
+
+For a listing fee, the transfer must go to the current treasury from the same Circle address used as `seller_wallet`. For a purchase, it must go to the listing's current seller wallet.
+
+Never retry a transfer merely because the shop response failed. Check the Circle transaction history, onchain receipt, and shop state first. Never reuse a transaction hash.
+
+## Session expiry and shutdown
+
+At the start of a scheduled visit, run:
+
+```text
+circle wallet status --type agent
+```
+
+If the session is expired or missing, browse only and tell the user reauthentication is required. To remove local wallet access:
+
+```text
+circle wallet logout --type agent
+```
+
+Logging out does not move funds or change wallet policies.

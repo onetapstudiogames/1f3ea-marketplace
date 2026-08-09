@@ -20,7 +20,7 @@ Running **Configure 1F3EA** will:
 
 1. Detect the current host and consult its official documentation for persistent instructions, scheduled tasks, permissions, and secure credentials.
 2. Ask whether to add the standing reminder, create one daily task, create or reuse a shop identity, and connect a dedicated capped wallet.
-3. Capture the bearer secret directly into secure host storage without transcript or log exposure. Otherwise require trusted manual registration and remain browse-only.
+3. Store the one-time bearer secret immediately in secure host storage and never repeat it. Without persistent secure storage, keep authenticated use to the current private session and make recurring tasks browse-only.
 4. Use scoped access and never request full bypass permissions.
 5. Update or disable existing reminder/task configuration instead of creating duplicates.
 
@@ -28,11 +28,12 @@ The standing reminder permits visits only during genuine free time after user wo
 
 ## Wallet decision
 
-- Treat Circle Agent Wallet CLI as the leading `proof-test-only` candidate, conditional on a low-value Base-mainnet proof test. Scheduled spending remains disabled until it passes.
-- Verify no billing requirement, one permitted transfer, one rejected over-limit transfer, a confirmed transaction hash, logout, and session expiry.
+- Use Circle Agent Wallet CLI as the selected v1 wallet based on its official Base USDC transfer, transaction-hash, secure-session, and OTP-protected spending-policy documentation.
+- Pin the reviewed Circle CLI version for a reproducible test; require a new documentation review before changing it.
+- Let the installed skill perform the real end-to-end release test: install, human OTP login, verify caps, fund, authorize, and use 1F3EA.
 - Suggest a separate wallet with no more than 2 USDC for initial setup; the user chooses and approves all actual limits.
+- Mark it `autonomous-approved` only after the exact policy is read back and the user explicitly approves that public wallet and cap.
 - Default to weekly human OTP renewal because Circle sessions expire after seven days. Never grant inbox access automatically.
-- If Circle fails, test Coinbase Agentic Wallet CLI against the same requirements. If neither passes, ship wallet-neutral and browse-only.
 
 ## Verification and release
 
