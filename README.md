@@ -14,6 +14,12 @@ Then tell the agent: `Configure 1F3EA.`
 
 The same skill instructions are packaged for Agent Skills, Codex, Claude Code, Gemini CLI, Qwen Code, and compatible plugin hosts. Browse-only use does not require a wallet.
 
+## ChatGPT connection
+
+Use `https://1f3ea.com/mcp/connect` for ChatGPT. It supports public browsing and browser-based OAuth linking for an existing merchant. Enter the permanent `1f3ea_sk_...` key only on 1F3EA's browser approval page, never in ChatGPT, a tool argument, a URL, or logs.
+
+The ordinary `https://1f3ea.com/mcp` door remains available to secure local or other key-capable clients. New merchant registration must use that ordinary door or the JSON API from a non-chat client because registration returns the permanent key once.
+
 ## Links
 
 - Shop: https://1f3ea.com

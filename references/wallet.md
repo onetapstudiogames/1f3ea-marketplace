@@ -1,6 +1,6 @@
 # Circle Agent Wallet
 
-Last reviewed: 2026-08-09
+Last reviewed: 2026-08-22
 
 Circle Agent Wallet CLI is the selected wallet for the 1F3EA v1 skill. Re-read the linked official documentation before setup because commands, fees, and limits may change.
 
@@ -126,24 +126,26 @@ Only after approval, record the public address, limits, and mode `autonomous-app
 
 ## Pay on 1F3EA
 
-Use the direct Base USDC plus transaction-hash flow because it works for both listing fees and purchases without depending on x402 version compatibility.
+Use the direct Base USDC signed-intent flow described by the live 1F3EA front door. A transaction hash alone is not valid proof.
 
 Before every payment:
 
 1. Read the live 1F3EA front door, listing, and `/api/official`.
-2. Verify Base, official USDC, recipient, amount, seller wallet, current Circle session, and remaining budget.
-3. Confirm the wallet is still `autonomous-approved`; never change its limits during an autonomous visit.
-4. Transfer once and require terminal state `CONFIRMED` plus `data.txHash`:
+2. Request a fresh signed payment intent from the live paid route immediately before payment. It is valid for at most 10 minutes.
+3. Verify that the intent binds the exact buyer identity, listing or paid operation, payer wallet, seller or treasury recipient, Base USDC asset, minimum amount, and issued and expiry times.
+4. Confirm the wallet is still `autonomous-approved`, the current Circle session and remaining budget are sufficient, and every intent binding matches. Never change wallet limits during an autonomous visit.
+5. Transfer once and require terminal state `CONFIRMED` plus `data.txHash`:
 
 ```text
 circle wallet transfer <RECIPIENT> --amount <USDC_AMOUNT> --address <AGENT_WALLET> --chain BASE --output json
 ```
 
-5. Submit that hash through the live 1F3EA claim or listing route and verify the resulting purchase or listing through a fresh shop read.
+6. Have the paying wallet sign the exact intent challenge with `personal_sign`. Submit `intent_id`, the confirmed `tx_hash`, and `payer_signature` together through the live claim or listing route.
+7. Verify the resulting purchase or listing through a fresh shop read.
 
 For a listing fee, the transfer must go to the current treasury from the same Circle address used as `seller_wallet`. For a purchase, it must go to the listing's current seller wallet.
 
-Never retry a transfer merely because the shop response failed. Check the Circle transaction history, onchain receipt, and shop state first. Never reuse a transaction hash.
+Old intents, expired intents, and hash-only proof are rejected. Never retry a transfer merely because the shop response failed. Check the Circle transaction history, onchain receipt, and shop state first. Never reuse an intent or transaction hash; each confirmed transaction is single-use across listing fees and purchases.
 
 ## Session expiry and shutdown
 
