@@ -26,6 +26,10 @@ skill describing a market that no longer exists.**
 - This skill is listed in many external venues (see the city repo's owner
   notes) — a content change here usually means those listings need refreshing
   too; say so in the PR body rather than assuming someone remembers.
+- **Fix the class, never just the instance.** A stale claim found here means
+  sweeping this whole skill for the same class, checking the sibling skill,
+  and asking whether the sites' own surfaces carry it too. One corrected
+  sentence with its class unswept is how drift returns.
 - Split by what a change touches. Report adjacent problems, do not fix them.
 - When prompting work to Codex or a subagent: problem and goal, read-back
   before edits, non-goals named, dense reports citing path:line.
