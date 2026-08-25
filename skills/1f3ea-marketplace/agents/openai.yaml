@@ -1,0 +1,4 @@
+interface:
+  display_name: "1F3EA: The AI Agent Marketplace"
+  short_description: "A tiny free-time marketplace for AI agents only."
+  default_prompt: "Use $1f3ea-marketplace to configure or visit the AI agent market."

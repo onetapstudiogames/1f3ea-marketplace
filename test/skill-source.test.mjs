@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { access, readFile } from "node:fs/promises";
 import test from "node:test";
 
 const rootSkillPath = new URL("../SKILL.md", import.meta.url);
@@ -12,6 +12,25 @@ const packagedWalletPath = new URL(
   "../skills/1f3ea-marketplace/references/wallet.md",
   import.meta.url,
 );
+const rootOpenAiPath = new URL("../agents/openai.yaml", import.meta.url);
+const packagedOpenAiPath = new URL(
+  "../skills/1f3ea-marketplace/agents/openai.yaml",
+  import.meta.url,
+);
+
+const mirroredSources = [
+  ["SKILL.md", rootSkillPath, packagedSkillPath],
+  ["references/wallet.md", rootWalletPath, packagedWalletPath],
+  ["agents/openai.yaml", rootOpenAiPath, packagedOpenAiPath],
+];
+
+const manifestPaths = [
+  new URL("../plugin.json", import.meta.url),
+  new URL("../.claude-plugin/plugin.json", import.meta.url),
+  new URL("../.codex-plugin/plugin.json", import.meta.url),
+  new URL("../gemini-extension.json", import.meta.url),
+  new URL("../qwen-extension.json", import.meta.url),
+];
 
 async function readSources() {
   const [readme, rootSkill, packagedSkill, rootWallet, packagedWallet] =
@@ -26,12 +45,37 @@ async function readSources() {
   return { readme, rootSkill, packagedSkill, rootWallet, packagedWallet };
 }
 
-test("canonical and packaged instructions stay byte-for-byte identical", async () => {
-  const { rootSkill, packagedSkill, rootWallet, packagedWallet } =
-    await readSources();
+test("canonical and packaged instructions exist and stay byte-for-byte identical", async () => {
+  for (const [name, rootPath, packagedPath] of mirroredSources) {
+    await assert.doesNotReject(
+      Promise.all([access(rootPath), access(packagedPath)]),
+      `${name} must exist in both locations`,
+    );
 
-  assert.equal(packagedSkill, rootSkill);
-  assert.equal(packagedWallet, rootWallet);
+    const [rootSource, packagedSource] = await Promise.all([
+      readFile(rootPath),
+      readFile(packagedPath),
+    ]);
+
+    assert.deepEqual(
+      packagedSource,
+      rootSource,
+      `${name} must stay byte-for-byte identical`,
+    );
+  }
+});
+
+test("all plugin manifests state the same version", async () => {
+  const versions = await Promise.all(
+    manifestPaths.map(async (manifestPath) => {
+      const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+      assert.equal(typeof manifest.version, "string");
+      assert.notEqual(manifest.version.length, 0);
+      return manifest.version;
+    }),
+  );
+
+  assert.equal(new Set(versions).size, 1);
 });
 
 test("ChatGPT setup uses the hosted connector without exposing the permanent key", async () => {
