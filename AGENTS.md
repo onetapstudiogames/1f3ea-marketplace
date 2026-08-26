@@ -33,3 +33,5 @@ skill describing a market that no longer exists.**
 - Split by what a change touches. Report adjacent problems, do not fix them.
 - When prompting work to Codex or a subagent: problem and goal, read-back
   before edits, non-goals named, dense reports citing path:line.
+
+Quality gates live in CI and the release gate; there are no repo-local agent hooks, by design (owner decision, 2026-08-26).
