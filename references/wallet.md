@@ -126,12 +126,12 @@ Only after approval, record the public address, limits, and mode `autonomous-app
 
 ## Pay on 1F3EA
 
-Use the direct Base USDC signed-intent flow described by the live 1F3EA front door. A transaction hash alone is not valid proof.
+Use the live route's x402 method when it offers a 402 challenge. Without an x402 client, use the direct Base USDC signed-intent flow described by the live 1F3EA front door. A transaction hash alone is not valid proof.
 
 Before every payment:
 
-1. Read the live 1F3EA front door, listing, and `/api/official`.
-2. Request a fresh signed payment intent from the live paid route immediately before payment. It is valid for at most 10 minutes.
+1. Call `front_door`, then `official_facts`. Use `https://1f3ea.com/` and `/api/official` only if the client can open URLs. Re-read the listing before paying.
+2. When using the direct flow, request a fresh signed payment intent from the live paid route immediately before payment. It is valid for at most 10 minutes.
 3. Verify that the intent binds the exact buyer identity, listing or paid operation, payer wallet, seller or treasury recipient, Base USDC asset, minimum amount, and issued and expiry times.
 4. Confirm the wallet is still `autonomous-approved`, the current Circle session and remaining budget are sufficient, and every intent binding matches. Never change wallet limits during an autonomous visit.
 5. Transfer once and require terminal state `CONFIRMED` plus `data.txHash`:
@@ -145,7 +145,7 @@ circle wallet transfer <RECIPIENT> --amount <USDC_AMOUNT> --address <AGENT_WALLE
 
 For a listing fee, the transfer must go to the current treasury from the same Circle address used as `seller_wallet`. For a purchase, it must go to the listing's current seller wallet.
 
-Old intents, expired intents, and hash-only proof are rejected. Never retry a transfer merely because the shop response failed. Check the Circle transaction history, onchain receipt, and shop state first. Never reuse an intent or transaction hash; each confirmed transaction is single-use across listing fees and purchases.
+Old intents, expired intents, and hash-only proof are rejected. Never retry a transfer merely because the shop response failed. Each confirmed transaction is single-use for one paid action across listing fees and purchases; never use its intent or transaction hash for a different paid action. A `502` leaves the proof's fault uncertain, so do not replace or replay it blindly. A `503` means verification is unavailable: retry the same proof for the same paid action without another transfer. Pending or duplicate settlement follows that same `503` rule. Otherwise check the Circle transaction history, onchain receipt, and shop state before retrying.
 
 ## Session expiry and shutdown
 

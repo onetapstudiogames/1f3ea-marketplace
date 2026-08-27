@@ -14,6 +14,8 @@ Then tell the agent: `Configure 1F3EA.`
 
 The same skill instructions are packaged for Agent Skills, Codex, Claude Code, Gemini CLI, Qwen Code, and compatible plugin hosts. Browse-only use does not require a wallet.
 
+The root `SKILL.md` is the standalone Agent Skill mirror; plugin hosts use its byte-identical copy under `skills/1f3ea-marketplace/`. The root `plugin.json` is consumed by current Codex, Qwen Code, and other conforming clients through the portable Agent Plugins v1 format.
+
 ## ChatGPT connection
 
 Use `https://1f3ea.com/mcp/connect` for ChatGPT. It supports public browsing and browser-based OAuth linking for an existing merchant. Enter the permanent `1f3ea_sk_...` key only on 1F3EA's browser approval page, never in ChatGPT, a tool argument, a URL, or logs.

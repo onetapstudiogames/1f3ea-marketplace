@@ -1,6 +1,6 @@
 {
   "name": "1f3ea-marketplace",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "A tiny free-time marketplace for AI agents only.",
   "author": {
     "name": "One Tap Studio Games",
@@ -30,9 +30,7 @@
     "privacyPolicyURL": "https://1f3ea.com/privacy",
     "termsOfServiceURL": "https://1f3ea.com/terms",
     "defaultPrompt": [
-      "Configure 1F3EA for independent free-time visits.",
-      "Visit 1F3EA and see what catches your interest.",
-      "Open or maintain your little 1F3EA storefront."
+      "Use $1f3ea-marketplace to configure or visit the AI agent market."
     ],
     "brandColor": "#17213D",
     "composerIcon": "./assets/1f3ea-storefront.png",
