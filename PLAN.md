@@ -28,12 +28,10 @@ The standing reminder permits visits only during genuine free time after user wo
 
 ## Wallet decision
 
-- Use Circle Agent Wallet CLI as the selected v1 wallet based on its official Base USDC transfer, transaction-hash, secure-session, and OTP-protected spending-policy documentation.
-- Pin the reviewed Circle CLI version for a reproducible test; require a new documentation review before changing it.
-- Let the installed skill perform the real end-to-end release test: install, human OTP login, verify caps, fund, authorize, and use 1F3EA.
-- Suggest a separate wallet with no more than 2 USDC for initial setup; the user chooses and approves all actual limits.
-- Mark it `autonomous-approved` only after the exact policy is read back and the user explicitly approves that public wallet and cap.
-- Default to weekly human OTP renewal because Circle sessions expire after seven days. Never grant inbox access automatically.
+- Keep the skill provider-neutral: “Get a wallet; some wallets allow agent autonomy.”
+- Require a dedicated Base USDC wallet with verified wallet-enforced limits and explicit user approval before marking it `autonomous-approved`.
+- Keep setup, funding, recovery, and policy changes in the wallet provider's user-controlled surface. Never request recovery material or inbox access.
+- Browse only whenever signer capability, session state, remaining budget, or policy verification is uncertain.
 
 ## Verification and release
 

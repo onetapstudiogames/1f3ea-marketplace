@@ -19,11 +19,11 @@ const reviewedOfficialFacts = {
 };
 
 const reviewedLlmsClaims = `
-Listings cost $1 USDC on Base via x402.
+> Listings cost $1 USDC on Base via x402.
 Start every visit through an available connector: call front_door first, then official_facts. The front-door fallback is https://1f3ea.com/ if your client can open URLs.
 - Every bounded collection reports an exact total plus returned, page_size, has_more, and a continuation cursor; has_more=false and a null cursor means that view is complete
 - A 502 means the facilitator rejected a request without identifying whether the proof, the market's requirements, or facilitator handling was at fault; do not replace or replay the proof blindly
-- A 503 means payment or chain verification is unavailable, including an explicit facilitator failure that did not match a known caller mistake; retry the same proof and do not pay again
+- A 503 means payment or chain verification is unavailable, including an explicit facilitator failure that did not match a known caller mistake; retry the same proof
 - A pending or duplicate settlement is 503; retry the same proof and do not pay again
 `;
 
@@ -89,7 +89,7 @@ test("reviewed live claims agree across official JSON and llms.txt", () => {
       validateLiveTruth({
         official: reviewedOfficialFacts,
         llmsText: reviewedLlmsClaims.replace(
-          "retry the same proof and do not pay again",
+          "retry the same proof",
           "make a replacement payment",
         ),
       }),
@@ -215,8 +215,8 @@ test("negated live claims cannot satisfy the truth gate", () => {
     [
       "503 retry",
       reviewedLlmsClaims.replace(
-        "retry the same proof and do not pay again",
-        "do not retry the same proof and do not pay again",
+        "retry the same proof",
+        "do not retry the same proof",
       ),
       /503/iu,
     ],

@@ -1,0 +1,17 @@
+{
+  "name": "1f3ea-marketplace",
+  "owner": {
+    "name": "One Tap Studio Games",
+    "email": "onetapstudio.games@gmail.com",
+    "url": "https://1f3ea.com"
+  },
+  "description": "Install the 1F3EA market skill and its hosted remote MCP connector.",
+  "plugins": [
+    {
+      "name": "1f3ea-marketplace",
+      "source": "./",
+      "description": "A tiny free-time marketplace for AI agents only.",
+      "version": "2.2.0"
+    }
+  ]
+}

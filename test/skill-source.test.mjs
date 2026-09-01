@@ -243,21 +243,27 @@ test("world-aisle guidance keeps city ownership and retries safe", async () => {
   assert.doesNotMatch(rootSkill, /market remains `payment_pending`/iu);
 });
 
-test("ChatGPT merchant setup warns about the known bearer-header defect", async () => {
+test("hosted merchant setup follows the live browser ceremony and status gate", async () => {
   const { rootSkill } = await readSources();
 
-  assert.match(rootSkill, /github\.com\/onetapstudiogames\/1f3ea\/issues\/7/u);
+  assert.match(rootSkill, /https:\/\/1f3ea\.com\/join/u);
+  assert.match(rootSkill, /eight one-use recovery codes/iu);
+  assert.match(rootSkill, /https:\/\/1f3ea\.com\/recovery/u);
+  assert.match(rootSkill, /https:\/\/1f3ea\.com\/rotate/u);
   assert.match(
     rootSkill,
-    /known open defect[\s\S]{0,180}bearer header[\s\S]{0,180}(?:merchant-only|merchant) actions/iu,
+    /https:\/\/1f3ea\.com\/mcp\/connect[\s\S]{0,500}(?:new|create)[\s\S]{0,100}merchant/iu,
   );
   assert.match(
     rootSkill,
-    /step 4[\s\S]{0,160}(?:status read|verification read)[\s\S]{0,120}(?:detect|catch)[\s\S]{0,80}(?:early|before)/iu,
+    /ChatGPT[\s\S]{0,300}Claude|Claude[\s\S]{0,300}ChatGPT/iu,
   );
+  assert.match(rootSkill, /harmless[\s\S]{0,100}(?:protected|signed-in)[\s\S]{0,80}`me`/iu);
+  assert.doesNotMatch(rootSkill, /issues\/7|known open defect/iu);
+  assert.doesNotMatch(rootSkill, /register through the ordinary MCP|register.+JSON API/iu);
 });
 
-test("ChatGPT setup uses the hosted connector without exposing the permanent key", async () => {
+test("hosted setup keeps every permanent credential on 1F3EA browser pages", async () => {
   const { readme, rootSkill } = await readSources();
 
   for (const source of [readme, rootSkill]) {
@@ -266,13 +272,46 @@ test("ChatGPT setup uses the hosted connector without exposing the permanent key
     assert.match(source, /never.+(?:ChatGPT|chat|tool argument|URL|log)/is);
   }
 
-  assert.match(rootSkill, /existing merchant/i);
-  assert.match(rootSkill, /browser approval page/i);
+  assert.match(rootSkill, /new or existing merchant/i);
+  assert.match(rootSkill, /first-party|browser/iu);
   assert.match(rootSkill, /reconnect/i);
   assert.match(rootSkill, /disconnect|revoke/i);
   assert.match(rootSkill, /wrong address|remove.+re-add/is);
-  assert.match(rootSkill, /register.+(?:ordinary|non-chat|JSON)/is);
-  assert.doesNotMatch(rootSkill, /Never print, paste, log/);
+  assert.match(rootSkill, /never.+(?:chat|tool argument|tool output|URL|log)/is);
+});
+
+test("every visit uses standing before action and quotes the live tool and page limits", async () => {
+  const { rootSkill } = await readSources();
+  const visit = rootSkill.slice(
+    rootSkill.indexOf("## Visit and act autonomously"),
+    rootSkill.indexOf("## Trade in the world aisle"),
+  );
+
+  assert.match(visit, /`front_door`[\s\S]{0,140}`official_facts`[\s\S]{0,180}`me`/iu);
+  assert.match(visit, /anonymous[\s\S]{0,140}browse/iu);
+  assert.match(rootSkill, /exactly 21 tools/iu);
+  assert.match(
+    rootSkill,
+    /front_door, official_facts, browse, visit_store, set_store, read_listing, read_events, merchants, list_item, draft_world, list_world, checkout_world, sync_world, edit_item, world_status, withdraw_item, buy, my_purchases, vote, comment, me/u,
+  );
+  assert.match(rootSkill, /`my_purchases`[\s\S]{0,160}(?:1\.\.2|1-2)/iu);
+  assert.match(rootSkill, /`me`[\s\S]{0,180}`listings_limit`[\s\S]{0,80}(?:1\.\.50|1-50)/iu);
+  assert.match(rootSkill, /`\/api\/purchases\?[^`]{0,100}limit=(?:1\.\.2|1-2)[^`]*`/iu);
+  assert.match(rootSkill, /`\/api\/me\?[^`]{0,100}listings_limit=(?:1\.\.50|1-50)[^`]*`/iu);
+  assert.doesNotMatch(rootSkill, /`help` tool|GET `?\/api\/help|`\/tools`/iu);
+  assert.doesNotMatch(rootSkill, /`attention`|pending gifts|PayPal fee credit/iu);
+});
+
+test("the skill teaches canonical sharing and seller-kept city stalls", async () => {
+  const { rootSkill } = await readSources();
+
+  assert.match(rootSkill, /canonical public (?:URL|link)/iu);
+  assert.match(rootSkill, /never receive credentials or purchased (?:goods|artifacts)/iu);
+  assert.match(rootSkill, /https:\/\/1f3ea\.com\/city-bridge/u);
+  assert.match(rootSkill, /seller-kept[\s-]*stall|seller keeps[\s\S]{0,80}stall/iu);
+  assert.match(rootSkill, /city[\s\S]{0,100}(?:does not|never)[\s\S]{0,80}auto-mirror/iu);
+  assert.match(rootSkill, /stall[\s\S]{0,160}editable/iu);
+  assert.match(rootSkill, /verify every listing at 1F3EA/iu);
 });
 
 test("direct payment guidance requires a fresh bound proof", async () => {
@@ -295,9 +334,14 @@ test("direct payment guidance requires a fresh bound proof", async () => {
   }
 });
 
-test("the wallet reference starts connector-first and names x402", async () => {
+test("wallet guidance is provider-neutral while keeping authority and payment safety", async () => {
   const { rootWallet } = await readSources();
 
+  assert.match(rootWallet, /Get a wallet; some wallets allow agent autonomy\./u);
+  assert.doesNotMatch(rootWallet, /Circle|@circle-fin|OTP|0\.0\.6/iu);
+  assert.match(rootWallet, /dedicated wallet/iu);
+  assert.match(rootWallet, /wallet-enforced limits/iu);
+  assert.match(rootWallet, /explicit(?:ly)? (?:user )?(?:approval|approved|authority)/iu);
   assert.match(
     rootWallet,
     /`front_door`[\s\S]{0,160}`official_facts`/iu,
