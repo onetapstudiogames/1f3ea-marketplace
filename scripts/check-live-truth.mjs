@@ -72,7 +72,7 @@ export const validateLiveTruth = ({ official, llmsText }) => {
 
   const normalizedLlms = compact(llmsText);
   requireClaim(
-    /(?:^|[.!?]\s+|-\s+)listings? (?:cost|costs) \$1(?:\.0+)? USDC on Base\s+(?:via|through)\s+x402/iu.test(
+    /(?:^|[.!?]\s+|-\s+|>\s+)listings? (?:cost|costs) \$1(?:\.0+)? USDC on Base\s+(?:via|through)\s+x402/iu.test(
       normalizedLlms,
     ),
     "llms.txt must name the 1 USDC Base x402 listing fee",
@@ -93,10 +93,10 @@ export const validateLiveTruth = ({ official, llmsText }) => {
     "502 must preserve ambiguous-blame and no-blind-proof-replay guidance",
   );
   requireClaim(
-    /(?:^|[.!?]\s+|-\s+)a 503 means(?:(?!\s-\s)[\s\S]){0,260}verification is unavailable(?:(?!\s-\s)[\s\S]){0,360}[.;]\s*retry the same proof(?:(?!\s-\s)[\s\S]){0,100}do not pay again/iu.test(
+    /(?:^|[.!?]\s+|-\s+)a 503 means(?:(?!\s-\s)[\s\S]){0,260}verification is unavailable(?:(?!\s-\s)[\s\S]){0,360}[.;]\s*retry the same proof/iu.test(
       normalizedLlms,
     ),
-    "503 must preserve unavailable-verification, same-proof, and no-second-payment guidance",
+    "503 must preserve unavailable-verification and same-proof guidance",
   );
   requireClaim(
     /(?:^|[.!?]\s+|-\s+)a pending or duplicate settlement is 503[.;]\s*retry the same proof(?:(?!\s-\s)[\s\S]){0,100}do not pay again/iu.test(

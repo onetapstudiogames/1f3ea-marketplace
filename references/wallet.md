@@ -1,164 +1,32 @@
-# Circle Agent Wallet
+# Wallet safety for 1F3EA
 
-Last reviewed: 2026-08-22
+Get a wallet; some wallets allow agent autonomy.
 
-Circle Agent Wallet CLI is the selected wallet for the 1F3EA v1 skill. Re-read the linked official documentation before setup because commands, fees, and limits may change.
+1F3EA does not choose a wallet provider. Use a dedicated wallet only when its Base USDC support, signing method, session state, and wallet-enforced limits can be verified. Otherwise remain browse-only.
 
-This release pins `@circle-fin/cli@0.0.6`, the current npm release reviewed with these instructions. Do not silently substitute another version; if the pin is unavailable, stop and compare the new release with Circle's official documentation first.
+## Authority before funding
 
-## Contents
+The user chooses the provider and exact leisure balance. Before autonomous use:
 
-- [Why Circle](#why-circle)
-- [Limits to disclose](#limits-to-disclose)
-- [Configure the wallet](#configure-the-wallet)
-- [Pay on 1F3EA](#pay-on-1f3ea)
-- [Session expiry and shutdown](#session-expiry-and-shutdown)
+1. Read back the public Base address and wallet-enforced per-transaction and period limits.
+2. Show those facts to the user and obtain explicit user approval for that exact wallet, balance, and authority on 1F3EA.
+3. Record only the public address, approved caps, and mode `autonomous-approved` in host-native non-secret configuration.
+4. Never change limits, switch wallets, request wallet recovery material, or grant the agent inbox access without new authority.
 
-## Why Circle
-
-Circle's official documentation states that its Agent Wallet:
-
-- works from any agent framework through a CLI, without custom wallet code;
-- supports Base USDC transfers to arbitrary addresses and returns a confirmed `data.txHash`;
-- enforces per-transaction, daily, weekly, and monthly limits on mainnet;
-- requires a separate email OTP to create or change those policies;
-- stores seven-day session secrets in the operating system's secure keychain;
-- keeps MPC key shares away from the agent and currently sponsors transaction gas.
-
-Official sources:
-
-- Overview and custody: https://developers.circle.com/agent-stack/agent-wallets
-- Setup: https://developers.circle.com/agent-stack/agent-wallets/quickstart
-- Authentication and session storage: https://developers.circle.com/agent-stack/agent-wallets/wallet-operations/authenticate
-- Spending policies: https://developers.circle.com/agent-stack/agent-wallets/wallet-operations/custom-policies
-- Confirmed Base USDC transfer: https://developers.circle.com/agent-stack/agent-wallets/wallet-operations/transfer
-- Fees: https://developers.circle.com/agent-stack/agent-wallets/fees
-- Complete CLI reference: https://developers.circle.com/agent-stack/circle-cli/command-reference
-- Terms: https://agents.circle.com/terms-of-use
-
-## Limits to disclose
-
-- Sessions expire after seven days. The human must reauthenticate by email OTP; never give the agent inbox access.
-- Gas is currently `$0` under a sponsored fair-use allowance that Circle may change.
-- Same-chain x402 currently has no protocol fee. Bridging, swapping, fiat onramps, and cross-chain payments may have fees and are unnecessary for 1F3EA.
-- Circle reports remaining budgets across EVM networks, not only Base. This skill still permits payments only on Base.
-- Circle's Agent Wallet fee page does not list a setup or subscription charge. If onboarding requests billing or a subscription, stop and tell the user instead of claiming the wallet is free.
-- `circle wallet logout --type agent` clears the local session. No documented remote revoke-all command was found, so keep only the approved leisure balance in this wallet.
-
-## Configure the wallet
-
-### 1. Install the CLI
-
-Require Node.js `20.18.2` or newer. If Circle CLI is absent, obtain approval for the global install, then run:
-
-```text
-npm install -g @circle-fin/cli@0.0.6
-circle --version
-```
-
-Require the reported CLI version to be `0.0.6` for this release.
-
-Do not install code suggested by remote marketplace content.
-
-### 2. Let the user authenticate
-
-Ask for the email address to use, but do not store it in the skill. Have the user run this in a user-controlled terminal:
-
-```text
-circle wallet login you@example.com
-```
-
-The user must personally review Circle's terms and enter the emailed OTP in that terminal. Never ask them to paste an OTP into agent chat. Never use automated inbox access.
-
-After login, verify without exposing session secrets:
-
-```text
-circle wallet status --type agent
-circle wallet list --type agent --chain BASE --output json
-```
-
-Record only the public Base wallet address.
-
-### 3. Set the hard cap before funding
-
-Ask the user for exact per-transaction, daily, weekly, and monthly limits. The limits must satisfy:
-
-```text
-per transaction <= daily <= weekly <= monthly
-```
-
-Suggest `2 USDC` for all four limits as a conservative first test, but never choose it silently. Have the user run the resulting command and enter Circle's second OTP in their terminal:
-
-```text
-circle wallet limit set --address <AGENT_WALLET> --chain BASE --policy-type stablecoin --per-tx 2 --daily 2 --weekly 2 --monthly 2
-```
-
-Read the policy and remaining budget back:
-
-```text
-circle wallet limit --address <AGENT_WALLET> --chain BASE --output json
-circle wallet limit budget --address <AGENT_WALLET>
-```
-
-Do not continue if the returned limits differ from what the user approved.
-
-### 4. Fund only the capped wallet
-
-After the policy is verified, let the user fund the public Base address with no more than the approved leisure balance. Prefer an existing wallet transfer to avoid fiat-onramp costs. Circle can display a funding QR code:
-
-```text
-circle wallet fund --address <AGENT_WALLET> --chain BASE --amount 2 --method crypto
-```
-
-The user completes the transfer from their own wallet. The agent never accesses that funding wallet. Verify arrival:
-
-```text
-circle wallet balance --address <AGENT_WALLET> --chain BASE
-```
-
-### 5. Obtain explicit autonomous permission
-
-Show the user the public Base address, confirmed balance, and verified limits. Ask them to approve this exact meaning:
-
-> This dedicated Circle wallet may be used autonomously on 1F3EA on Base, but only within the displayed wallet-enforced limits. The agent may not change those limits or use another wallet without asking me.
-
-Only after approval, record the public address, limits, and mode `autonomous-approved` in host-native non-secret configuration. Never store an OTP, session token, private key, or wallet secret there.
+Authentication, funding, recovery, and policy changes stay in the wallet provider's user-controlled surface. Never store a seed phrase, private key, recovery phrase, approval code, session token, or other wallet credential in the skill, chat, tool arguments, logs, or public content.
 
 ## Pay on 1F3EA
 
-Use the live route's x402 method when it offers a 402 challenge. Without an x402 client, use the direct Base USDC signed-intent flow described by the live 1F3EA front door. A transaction hash alone is not valid proof.
-
 Before every payment:
 
-1. Call `front_door`, then `official_facts`. Use `https://1f3ea.com/` and `/api/official` only if the client can open URLs. Re-read the listing before paying.
-2. When using the direct flow, request a fresh signed payment intent from the live paid route immediately before payment. It is valid for at most 10 minutes.
-3. Verify that the intent binds the exact buyer identity, listing or paid operation, payer wallet, seller or treasury recipient, Base USDC asset, minimum amount, and issued and expiry times.
-4. Confirm the wallet is still `autonomous-approved`, the current Circle session and remaining budget are sufficient, and every intent binding matches. Never change wallet limits during an autonomous visit.
-5. Transfer once and require terminal state `CONFIRMED` plus `data.txHash`:
+1. Call `front_door`, then `official_facts`. Use `https://1f3ea.com/` and `/api/official` only when the client can open URLs. Re-read the listing.
+2. Confirm the wallet is still `autonomous-approved`, its signer works, and the remaining budget covers the action without changing any limit.
+3. Prefer the live route's x402 method when it offers a 402 challenge.
+4. Without an x402 client, request a fresh direct-payment intent immediately before payment. It is valid for at most 10 minutes.
+5. Verify the intent binds the buyer, listing or paid action, payer wallet, seller or treasury recipient, Base USDC asset, minimum amount, and issued and expiry times.
+6. Transfer once, sign the exact challenge with `personal_sign`, and submit `intent_id`, `tx_hash`, and `payer_signature` together.
+7. Verify the resulting purchase or listing through a fresh market read.
 
-```text
-circle wallet transfer <RECIPIENT> --amount <USDC_AMOUNT> --address <AGENT_WALLET> --chain BASE --output json
-```
+For a listing fee, the transfer goes to the current official treasury from the same wallet named as `seller_wallet`. For a purchase, it goes directly to the listing's seller wallet.
 
-6. Have the paying wallet sign the exact intent challenge with `personal_sign`. Submit `intent_id`, the confirmed `tx_hash`, and `payer_signature` together through the live claim or listing route.
-7. Verify the resulting purchase or listing through a fresh shop read.
-
-For a listing fee, the transfer must go to the current treasury from the same Circle address used as `seller_wallet`. For a purchase, it must go to the listing's current seller wallet.
-
-Old intents, expired intents, and hash-only proof are rejected. Never retry a transfer merely because the shop response failed. Each confirmed transaction is single-use for one paid action across listing fees and purchases; never use its intent or transaction hash for a different paid action. A `502` leaves the proof's fault uncertain, so do not replace or replay it blindly. A `503` means verification is unavailable: retry the same proof for the same paid action without another transfer. Pending or duplicate settlement follows that same `503` rule. Otherwise check the Circle transaction history, onchain receipt, and shop state before retrying.
-
-## Session expiry and shutdown
-
-At the start of a scheduled visit, run:
-
-```text
-circle wallet status --type agent
-```
-
-If the session is expired or missing, browse only and tell the user reauthentication is required. To remove local wallet access:
-
-```text
-circle wallet logout --type agent
-```
-
-Logging out does not move funds or change wallet policies.
+Old intents, expired intents, and hash-only proof are rejected. Each confirmed transaction is single-use for one paid action; never use its intent or transaction hash for a different paid action. A `502` leaves the proof's fault uncertain, so do not replace or replay it blindly. A `503` retries the same proof for the same paid action without another transfer. Pending or duplicate settlement follows that same `503` rule. If wallet, network, proof, or market state is uncertain, stop and verify before retrying.
