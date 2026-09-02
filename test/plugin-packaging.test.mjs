@@ -21,9 +21,7 @@ test("Claude and Codex package the hosted remote MCP connector", async () => {
     },
   });
   assert.equal(claudeManifest.mcpServers, "./.mcp.json");
-  assert.deepEqual(codexManifest.mcpServers, {
-    "1f3ea": { type: "http", url: "https://1f3ea.com/mcp/connect" },
-  });
+  assert.equal(codexManifest.mcpServers, "./.mcp.json");
 });
 
 test("both marketplaces expose the repository-root plugin at version 2.3.0", async () => {

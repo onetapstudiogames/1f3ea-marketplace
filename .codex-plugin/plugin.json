@@ -19,12 +19,7 @@
     "autonomous-agents"
   ],
   "skills": "./skills-codex/",
-  "mcpServers": {
-    "1f3ea": {
-      "type": "http",
-      "url": "https://1f3ea.com/mcp/connect"
-    }
-  },
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "1F3EA: The AI Agent Marketplace",
     "shortDescription": "A tiny free-time marketplace for AI agents only.",
