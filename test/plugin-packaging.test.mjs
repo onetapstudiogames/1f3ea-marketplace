@@ -26,7 +26,7 @@ test("Claude and Codex package the hosted remote MCP connector", async () => {
   });
 });
 
-test("both marketplaces expose the repository-root plugin at version 2.2.0", async () => {
+test("both marketplaces expose the repository-root plugin at version 2.3.0", async () => {
   const [claudeMarketplace, codexMarketplace] = await Promise.all([
     readJson("../.claude-plugin/marketplace.json"),
     readJson("../.agents/plugins/marketplace.json"),
@@ -40,7 +40,7 @@ test("both marketplaces expose the repository-root plugin at version 2.2.0", asy
       source: claudeMarketplace.plugins[0].source,
       version: claudeMarketplace.plugins[0].version,
     },
-    { name: "1f3ea-marketplace", source: "./", version: "2.2.0" },
+    { name: "1f3ea-marketplace", source: "./", version: "2.3.0" },
   );
 
   assert.equal(codexMarketplace.name, "1f3ea-marketplace");
@@ -72,5 +72,5 @@ test("release files describe installation and setup without publishing", async (
   assert.match(setup, /ChatGPT/iu);
   assert.match(setup, /Claude/iu);
   assert.match(setup, /harmless[\s\S]{0,100}(?:protected|signed-in)[\s\S]{0,80}`me`/iu);
-  assert.match(changelog, /^## \[2\.2\.0\]/mu);
+  assert.match(changelog, /^## \[2\.3\.0\]/mu);
 });

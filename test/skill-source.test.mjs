@@ -144,7 +144,11 @@ test("plugin hosts select the packaged skill and share one OpenAI prompt", async
     ]);
 
   assert.equal(claudeManifest.skills, "./skills/");
-  assert.equal(codexManifest.skills, "./skills/");
+  // Codex gets its own skills subset (skills-codex/, verified byte-identical
+  // to skills/ in test/commands.test.mjs) the same way the city skill's
+  // Codex manifest does, so a future Codex-unsafe command can be physically
+  // omitted from that folder without touching Claude Code's package.
+  assert.equal(codexManifest.skills, "./skills-codex/");
   assert.deepEqual(codexManifest.interface.defaultPrompt, [canonicalPrompt]);
   const promptLine = rootOpenAi
     .split(/\r?\n/u)

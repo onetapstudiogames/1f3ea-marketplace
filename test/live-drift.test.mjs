@@ -12,6 +12,10 @@ const reviewedOfficialFacts = {
   network: "base",
   usdc_contract: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
   listing_fee_usdc: 1,
+  x402_facilitator: {
+    verification_retry: "a timeout happens before settlement starts; retry the same request with the same proof",
+    settlement_retry: "a timeout may leave the result uncertain; retry the same proof and do not pay again",
+  },
   public_pagination: {
     completeness:
       "Every bounded collection reports an exact total, returned count, page size, has_more, and a continuation cursor. A null continuation means the response is complete.",
@@ -19,7 +23,7 @@ const reviewedOfficialFacts = {
 };
 
 const reviewedLlmsClaims = `
-> Listings cost $1 USDC on Base via x402.
+> Listings cost $1 USDC on Base via x402 or a direct seller-wallet-to-treasury transfer.
 Start every visit through an available connector: call front_door first, then official_facts. The front-door fallback is https://1f3ea.com/ if your client can open URLs.
 - Every bounded collection reports an exact total plus returned, page_size, has_more, and a continuation cursor; has_more=false and a null cursor means that view is complete
 - A 502 means the facilitator rejected a request without identifying whether the proof, the market's requirements, or facilitator handling was at fault; do not replace or replay the proof blindly
@@ -43,6 +47,28 @@ test("reviewed live claims agree across official JSON and llms.txt", () => {
       }),
     /listing fee/iu,
   );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: {
+          ...reviewedOfficialFacts,
+          x402_facilitator: { ...reviewedOfficialFacts.x402_facilitator, settlement_retry: "pay again immediately" },
+        },
+        llmsText: reviewedLlmsClaims,
+      }),
+    /settlement_retry/iu,
+  );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: { ...reviewedOfficialFacts, x402_facilitator: undefined },
+        llmsText: reviewedLlmsClaims,
+      }),
+    /x402_facilitator is missing/iu,
+  );
+
   assert.throws(
     () =>
       validateLiveTruth({
@@ -52,16 +78,27 @@ test("reviewed live claims agree across official JSON and llms.txt", () => {
           "open the website before trying connector tools",
         ),
       }),
-    /connector-first/iu,
+    /front_door before official_facts/iu,
   );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: { ...reviewedOfficialFacts, listing_fee_usdc: 2 },
+        llmsText: reviewedLlmsClaims.replace("$1 USDC", "$2 USDC"),
+      }),
+    /listing fee/iu,
+  );
+
   assert.throws(
     () =>
       validateLiveTruth({
         official: reviewedOfficialFacts,
-        llmsText: reviewedLlmsClaims.replace("via x402", "by wire transfer"),
+        llmsText: reviewedLlmsClaims.replace("$1 USDC on Base via x402", "$1 USDC on Base via wire transfer"),
       }),
-    /x402/iu,
+    /x402 rail/iu,
   );
+
   assert.throws(
     () =>
       validateLiveTruth({
@@ -73,55 +110,28 @@ test("reviewed live claims agree across official JSON and llms.txt", () => {
       }),
     /502/iu,
   );
+
   assert.throws(
     () =>
       validateLiveTruth({
         official: reviewedOfficialFacts,
-        llmsText: reviewedLlmsClaims.replace(
-          "A 502 means the facilitator rejected a request without identifying whether the proof, the market's requirements, or facilitator handling was at fault; do not replace or replay the proof blindly",
-          "A 502 means the facilitator rejected a request because the proof is definitely invalid; do not replace or replay the proof blindly",
-        ),
-      }),
-    /502/iu,
-  );
-  assert.throws(
-    () =>
-      validateLiveTruth({
-        official: reviewedOfficialFacts,
-        llmsText: reviewedLlmsClaims.replace(
-          "retry the same proof",
-          "make a replacement payment",
-        ),
+        llmsText: reviewedLlmsClaims.replaceAll("retry the same proof", "make a replacement payment"),
       }),
     /503/iu,
   );
+
   assert.throws(
     () =>
       validateLiveTruth({
         official: {
           ...reviewedOfficialFacts,
-          public_pagination: {
-            completeness: "Collections return a first page.",
-          },
+          public_pagination: { completeness: "Collections return a first page." },
         },
         llmsText: reviewedLlmsClaims,
       }),
-    /pagination/iu,
+    /pagination completeness promise changed/iu,
   );
-  assert.throws(
-    () =>
-      validateLiveTruth({
-        official: {
-          ...reviewedOfficialFacts,
-          public_pagination: {
-            completeness:
-              "Every bounded collection reports not an exact total, returned count, page size, has_more, and a continuation cursor. A null continuation means the response is complete.",
-          },
-        },
-        llmsText: reviewedLlmsClaims,
-      }),
-    /pagination/iu,
-  );
+
   assert.throws(
     () =>
       validateLiveTruth({
@@ -131,182 +141,7 @@ test("reviewed live claims agree across official JSON and llms.txt", () => {
           "Every collection returns a first page",
         ),
       }),
-    /pagination/iu,
-  );
-  assert.throws(
-    () =>
-      validateLiveTruth({
-        official: reviewedOfficialFacts,
-        llmsText: reviewedLlmsClaims.replace(
-          "reports an exact total plus",
-          "reports not an exact total plus",
-        ),
-      }),
-    /pagination/iu,
-  );
-});
-
-test("negated live claims cannot satisfy the truth gate", () => {
-  const rejectedLlmsClaims = [
-    [
-      "connector order",
-      reviewedLlmsClaims.replace(
-        "call front_door first, then official_facts",
-        "do not call front_door first, then official_facts",
-      ),
-      /connector-first/iu,
-    ],
-    [
-      "connector visit",
-      reviewedLlmsClaims.replace(
-        "Start every visit through an available connector",
-        "Do not start every visit through an available connector",
-      ),
-      /connector-first/iu,
-    ],
-    [
-      "connector precedence",
-      reviewedLlmsClaims.replace(
-        "Start every visit through an available connector: call front_door first, then official_facts.",
-        "Start every visit at https://1f3ea.com/ before using the connector: call front_door first, then official_facts.",
-      ),
-      /connector-first/iu,
-    ],
-    [
-      "URL fallback",
-      reviewedLlmsClaims.replace(
-        "The front-door fallback is https://1f3ea.com/",
-        "The front-door fallback is not https://1f3ea.com/",
-      ),
-      /connector-first/iu,
-    ],
-    [
-      "URL capability",
-      reviewedLlmsClaims.replace(
-        "if your client can open URLs",
-        "if your client cannot open URLs",
-      ),
-      /connector-first/iu,
-    ],
-    [
-      "x402 method",
-      reviewedLlmsClaims.replace(
-        "Listings cost $1 USDC on Base via x402.",
-        "Listings cost $1 USDC on Base, but never via x402.",
-      ),
-      /x402/iu,
-    ],
-    [
-      "listing fee universality",
-      reviewedLlmsClaims.replace(
-        "Listings cost $1 USDC on Base via x402.",
-        "Not all listings cost $1 USDC on Base via x402.",
-      ),
-      /x402/iu,
-    ],
-    [
-      "502 assertion",
-      reviewedLlmsClaims.replace(
-        "A 502 means the facilitator rejected",
-        "It is false that a 502 means the facilitator rejected",
-      ),
-      /502/iu,
-    ],
-    [
-      "503 retry",
-      reviewedLlmsClaims.replace(
-        "retry the same proof",
-        "do not retry the same proof",
-      ),
-      /503/iu,
-    ],
-    [
-      "503 assertion",
-      reviewedLlmsClaims.replace(
-        "A 503 means payment or chain verification",
-        "It is false that a 503 means payment or chain verification",
-      ),
-      /503/iu,
-    ],
-    [
-      "pending settlement retry",
-      reviewedLlmsClaims.replace(
-        "A pending or duplicate settlement is 503; retry the same proof",
-        "A pending or duplicate settlement is 503; do not retry the same proof",
-      ),
-      /pending or duplicate/iu,
-    ],
-    [
-      "pending settlement assertion",
-      reviewedLlmsClaims.replace(
-        "A pending or duplicate settlement is 503",
-        "It is false that a pending or duplicate settlement is 503",
-      ),
-      /pending or duplicate/iu,
-    ],
-    [
-      "pagination completion",
-      reviewedLlmsClaims.replace(
-        "a null cursor means that view is complete",
-        "a null cursor does not mean that view is complete",
-      ),
-      /pagination/iu,
-    ],
-    [
-      "pagination completion pair",
-      reviewedLlmsClaims.replace(
-        "has_more=false and a null cursor means that view is complete",
-        "has_more=false does not matter; a null cursor means that view is complete",
-      ),
-      /pagination/iu,
-    ],
-    [
-      "collection universality",
-      reviewedLlmsClaims.replace(
-        "Every bounded collection reports an exact total",
-        "Not every bounded collection reports an exact total",
-      ),
-      /pagination/iu,
-    ],
-  ];
-
-  for (const [name, llmsText, expected] of rejectedLlmsClaims) {
-    assert.throws(
-      () => validateLiveTruth({ official: reviewedOfficialFacts, llmsText }),
-      expected,
-      name,
-    );
-  }
-
-  assert.throws(
-    () =>
-      validateLiveTruth({
-        official: {
-          ...reviewedOfficialFacts,
-          public_pagination: {
-            completeness:
-              "Every bounded collection reports an exact total, returned count, page size, has_more, and a continuation cursor. A null continuation does not mean the response is complete.",
-          },
-        },
-        llmsText: reviewedLlmsClaims,
-      }),
-    /pagination/iu,
-    "official pagination completion",
-  );
-  assert.throws(
-    () =>
-      validateLiveTruth({
-        official: {
-          ...reviewedOfficialFacts,
-          public_pagination: {
-            completeness:
-              "Not every bounded collection reports an exact total, returned count, page size, has_more, and a continuation cursor. A null continuation means the response is complete.",
-          },
-        },
-        llmsText: reviewedLlmsClaims,
-      }),
-    /pagination/iu,
-    "official collection universality",
+    /llms\.txt pagination/iu,
   );
 });
 

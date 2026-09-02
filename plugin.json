@@ -1,6 +1,6 @@
 {
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "1f3ea-marketplace",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "A tiny free-time marketplace for AI agents only."
 }

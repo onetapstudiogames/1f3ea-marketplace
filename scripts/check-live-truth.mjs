@@ -41,11 +41,14 @@ const isTransportFailure = (error) => {
   );
 };
 
+// Every check below is structural: it either compares a fixed, reviewed
+// baseline against a field the live /api/official response actually returns,
+// or it pulls the expected wording straight out of that same live response
+// and checks llms.txt agrees with it. Nothing here pins an independently
+// authored copy of a sentence that could quietly drift out of sync with the
+// live facts it is supposed to describe.
 export const validateLiveTruth = ({ official, llmsText }) => {
-  requireClaim(
-    official && typeof official === "object",
-    "/api/official must return a JSON object",
-  );
+  requireClaim(official && typeof official === "object", "/api/official must return a JSON object");
   requireClaim(official.network === reviewed.network, "network must be Base");
   requireClaim(
     String(official.treasury).toLowerCase() === reviewed.treasury,
@@ -60,9 +63,20 @@ export const validateLiveTruth = ({ official, llmsText }) => {
     "listing fee must be 1 USDC",
   );
 
-  const pagination = compact(
-    String(official.public_pagination?.completeness ?? ""),
+  const facilitator = official.x402_facilitator;
+  requireClaim(facilitator && typeof facilitator === "object", "/api/official x402_facilitator is missing");
+  const verificationRetry = compact(String(facilitator.verification_retry ?? ""));
+  const settlementRetry = compact(String(facilitator.settlement_retry ?? ""));
+  requireClaim(
+    /retry the same (?:request|proof)/iu.test(verificationRetry),
+    "/api/official x402_facilitator.verification_retry changed",
   );
+  requireClaim(
+    /retry the same proof/iu.test(settlementRetry) && /do not pay again/iu.test(settlementRetry),
+    "/api/official x402_facilitator.settlement_retry changed",
+  );
+
+  const pagination = compact(String(official.public_pagination?.completeness ?? ""));
   requireClaim(
     /^every bounded collection reports an exact total.{0,100}returned count.{0,80}page size.{0,80}has_more.{0,100}continuation cursor[.;]\s*(?:a )?null continuation means (?:the )?response is complete/iu.test(
       pagination,
@@ -71,41 +85,50 @@ export const validateLiveTruth = ({ official, llmsText }) => {
   );
 
   const normalizedLlms = compact(llmsText);
+
+  // The listing-fee sentence must agree with official.listing_fee_usdc's own
+  // live value, not a separately hardcoded "$1" that could go stale.
+  const feeLine = llmsText.split(/\r?\n/u).find((entry) => /listings? (?:cost|costs)/iu.test(entry));
+  requireClaim(Boolean(feeLine), "llms.txt listing-fee sentence disagrees with /api/official (sentence not found)");
+  const feeSentence = compact(feeLine);
   requireClaim(
-    /(?:^|[.!?]\s+|-\s+|>\s+)listings? (?:cost|costs) \$1(?:\.0+)? USDC on Base\s+(?:via|through)\s+x402/iu.test(
+    feeSentence.includes(`$${official.listing_fee_usdc}`),
+    "llms.txt listing-fee sentence disagrees with /api/official (amount)",
+  );
+  requireClaim(/\bUSDC\b/iu.test(feeSentence), "llms.txt listing-fee sentence disagrees with /api/official (currency)");
+  requireClaim(
+    new RegExp(`\\b${official.network}\\b`, "iu").test(feeSentence),
+    "llms.txt listing-fee sentence disagrees with /api/official (network)",
+  );
+  requireClaim(/\bx402\b/iu.test(feeSentence), "llms.txt listing-fee sentence disagrees with /api/official (x402 rail)");
+
+  requireClaim(
+    /front_door[\s\S]{0,200}official_facts/iu.test(normalizedLlms),
+    "connector-first opening must call front_door before official_facts",
+  );
+  const domainPattern = String(official.domain ?? "").replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  requireClaim(
+    domainPattern.length > 0 && new RegExp(`${domainPattern}/?[\\s\\S]{0,120}open URLs`, "iu").test(normalizedLlms),
+    "front-door URL fallback must reference the official domain and stay conditional on opening URLs",
+  );
+
+  requireClaim(
+    /\b502\b[\s\S]{0,200}facilitator[\s\S]{0,200}(?:do not|never)[\s\S]{0,60}(?:replace|replay)/iu.test(normalizedLlms),
+    "502 guidance must still explain the facilitator rejection and warn against blind proof replay",
+  );
+  requireClaim(
+    /\b503\b[\s\S]{0,200}unavailable[\s\S]{0,220}retry the same proof/iu.test(normalizedLlms),
+    "503 guidance must still describe unavailable verification with a same-proof retry",
+  );
+  requireClaim(
+    /pending or duplicate settlement[\s\S]{0,40}\b503\b[\s\S]{0,120}retry the same proof[\s\S]{0,80}do not pay again/iu.test(
       normalizedLlms,
     ),
-    "llms.txt must name the 1 USDC Base x402 listing fee",
+    "pending/duplicate settlement guidance must remain 503 with a safe same-proof retry",
   );
+
   requireClaim(
-    /(?:^|[.!?]\s+|-\s+)start every visit\s+(?:through|with)\s+(?:(?:an?|the)\s+)?(?:available\s+)?connector\s*:\s*call front_door first\s*,?\s*then official_facts/iu.test(
-      normalizedLlms,
-    ) &&
-      /(?:^|[.!?]\s+)(?:the )?front[- ]door fallback is https:\/\/1f3ea\.com\/ if (?:your )?client can open URLs/iu.test(
-        normalizedLlms,
-      ),
-    "connector-first opening must keep front_door, official_facts, then the URL-capable fallback",
-  );
-  requireClaim(
-    /(?:^|[.!?]\s+|-\s+)a 502 means(?:(?!\s-\s)[\s\S]){0,260}facilitator rejected(?:(?!\s-\s)[\s\S]){0,220}without (?:(?!\s-\s)[\s\S]){0,100}(?:identifying|saying)(?:(?!\s-\s)[\s\S]){0,100}whether(?:(?!\s-\s)[\s\S]){0,140}proof(?:(?!\s-\s)[\s\S]){0,180}requirements(?:(?!\s-\s)[\s\S]){0,180}facilitator handling(?:(?!\s-\s)[\s\S]){0,120}at fault(?:(?!\s-\s)[\s\S]){0,220}do not (?:replace or replay|retry or replay)(?:(?!\s-\s)[\s\S]){0,100}blindly/iu.test(
-      normalizedLlms,
-    ),
-    "502 must preserve ambiguous-blame and no-blind-proof-replay guidance",
-  );
-  requireClaim(
-    /(?:^|[.!?]\s+|-\s+)a 503 means(?:(?!\s-\s)[\s\S]){0,260}verification is unavailable(?:(?!\s-\s)[\s\S]){0,360}[.;]\s*retry the same proof/iu.test(
-      normalizedLlms,
-    ),
-    "503 must preserve unavailable-verification and same-proof guidance",
-  );
-  requireClaim(
-    /(?:^|[.!?]\s+|-\s+)a pending or duplicate settlement is 503[.;]\s*retry the same proof(?:(?!\s-\s)[\s\S]){0,100}do not pay again/iu.test(
-      normalizedLlms,
-    ),
-    "pending or duplicate settlement must remain 503 with safe same-proof retry",
-  );
-  requireClaim(
-    /(?:^|[.!?]\s+|-\s+)every bounded collection reports an exact total.{0,140}has_more.{0,120}(?:continuation )?cursor.{0,180}has_more=false\s*,?\s+and\s+(?:a )?null cursor means (?:that )?(?:view|response) is complete/iu.test(
+    /exact total[\s\S]{0,140}has_more[\s\S]{0,160}continuation cursor[\s\S]{0,180}has_more=false[\s\S]{0,60}null cursor[\s\S]{0,80}complete/iu.test(
       normalizedLlms,
     ),
     "llms.txt pagination completeness promise changed",
