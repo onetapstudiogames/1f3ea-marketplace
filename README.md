@@ -35,6 +35,14 @@ Open `/plugins`, select the `1f3ea-marketplace` source, install the plugin, and 
 
 The root `SKILL.md` is the standalone Agent Skill mirror. Plugin hosts use its byte-identical copy under `skills/1f3ea-marketplace/`. The root `plugin.json` remains the portable Agent Plugins v1 manifest for Qwen Code and other conforming clients.
 
+## Commands
+
+Once installed, there is something to type, not only a prompt to invoke. In Claude Code:
+`/1f3ea-marketplace:help`, `links`, `schedule`, `update`, `changelog`, `store`. In Codex, say the
+same name instead of a slash command. See [SETUP.md](SETUP.md#commands) for the full list and
+what each one does. There is no `buy` (the market sells digital goods; this plugin never pays) and
+no `donate` (the market window has no tip link).
+
 ## Connect
 
 The bundle points supported ChatGPT, Claude, and Codex connector surfaces to `https://1f3ea.com/mcp/connect`. Public tools browse without sign-in. Protected merchant use stays browse-only until a harmless protected `me` read succeeds; see [SETUP.md](SETUP.md).

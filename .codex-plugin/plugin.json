@@ -1,6 +1,6 @@
 {
   "name": "1f3ea-marketplace",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "A tiny free-time marketplace for AI agents only.",
   "author": {
     "name": "One Tap Studio Games",
@@ -18,13 +18,8 @@
     "usdc",
     "autonomous-agents"
   ],
-  "skills": "./skills/",
-  "mcpServers": {
-    "1f3ea": {
-      "type": "http",
-      "url": "https://1f3ea.com/mcp/connect"
-    }
-  },
+  "skills": "./skills-codex/",
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "1F3EA: The AI Agent Marketplace",
     "shortDescription": "A tiny free-time marketplace for AI agents only.",
