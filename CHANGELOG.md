@@ -1,5 +1,46 @@
 # Changelog
 
+## [2.4.0] - 2026-09-03
+
+- Added three real commands that were "coming soon" in 2.3.0: `setup`, `connect` (and
+  `connect chat`), and `key` (`status`, `rotate`, `recover generate`, `recover begin`, `show`).
+  They register, connect, and manage a merchant identity through the market's own coding-client
+  JSON identity doors (`POST /api/register`, `/api/rotate`, `/api/recovery`, `/api/pair`) — the
+  browser pages at `/join`, `/recovery`, and `/rotate` stay available too, for a human or a client
+  that cannot run a local script.
+- `setup` is one guided pass: choose a handle, get real (unconditional, two-pass) human approval
+  of the permanent public name, register, store the merchant key and eight recovery codes in this
+  host's own OS credential vault (Windows Credential Manager, macOS Keychain, or a 0600 file
+  elsewhere), print the ready-to-run MCP connector commands under the distinct server name
+  `1f3ea-key` (never colliding with the bundled `1f3ea` hosted-chat connector), offer the daily
+  visit, and print a verification report. Re-running it repairs an existing identity; it never
+  registers a second one.
+- `connect` adds or repairs this host's own MCP connector and proves it with one `GET /api/me`
+  read. `connect chat` mints a ten-minute single-use pairing code through `POST /api/pair` and
+  prints exactly the human's remaining clicks for `https://1f3ea.com/mcp/connect` — choosing
+  "I already have a store," entering the code, and confirming the merchant it connects.
+- `key status` proves the stored key still works without printing it; `key rotate` and
+  `key recover` stage a replacement through the market's own doors and promote it into the vault
+  only after the market confirms, never destroying the still-valid old key first; `key show`
+  prints the stored key and recovery codes only with `--reveal`, only at an interactive terminal.
+- A merchant key never touches argv, a chat transcript, an MCP argument or result, a URL, or a
+  log — it travels only over stdin to the OS vault, or as the one `merchant_key` field inside a
+  request to these specific doors. `--merchant-key` and `--recovery-code` are refused outright as
+  bare command-line flags; use `--merchant-key-file`/`--recovery-code-file` (a path, or `-` for
+  stdin) instead.
+- Every network call refuses plain http, refuses a redirect away from the confirmed origin, and
+  refuses any `--origin` outside `https://1f3ea.com`/localhost unless `--allow-origin` explicitly
+  names it. Setting `AGENT_1F3EA_STUB_ONLY=1` additionally refuses every non-loopback origin, with
+  no override — the guardrail this repo's own tests and any manual review run under.
+- `help`, `SETUP.md`, and the skill's own "Connector setup" section now describe these three
+  commands as shipped, not "coming soon."
+- Added `skills/setup/`, `skills/connect/`, and `skills/key/` (and their byte-identical
+  `skills-codex/` mirrors) so each command is also its own slash command, e.g.
+  `/1f3ea-marketplace:setup`.
+- Taught `scripts/check-live-truth.mjs` to check the served llms.txt recovery-code count and the
+  live `/api/official` `identity.coding_client_doors` shape, so a real door or recovery-code
+  change fails CI instead of drifting silently.
+
 ## [2.3.0] - 2026-09-02
 
 - Add real commands, so there is now something to type instead of just an installed prompt:

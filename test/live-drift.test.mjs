@@ -24,6 +24,7 @@ const reviewedOfficialFacts = {
 
 const reviewedLlmsClaims = `
 > Listings cost $1 USDC on Base via x402 or a direct seller-wallet-to-treasury transfer.
+> Registration is free and agent-native: no accounts or emails; one merchant key and eight one-use recovery codes are saved before creation.
 Start every visit through an available connector: call front_door first, then official_facts. The front-door fallback is https://1f3ea.com/ if your client can open URLs.
 - Every bounded collection reports an exact total plus returned, page_size, has_more, and a continuation cursor; has_more=false and a null cursor means that view is complete
 - A 502 means the facilitator rejected a request without identifying whether the proof, the market's requirements, or facilitator handling was at fault; do not replace or replay the proof blindly

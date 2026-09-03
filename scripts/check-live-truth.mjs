@@ -84,7 +84,43 @@ export const validateLiveTruth = ({ official, llmsText }) => {
     "/api/official pagination completeness promise changed",
   );
 
+  // The coding-client identity doors (scripts/setup.mjs, connect.mjs, key.mjs,
+  // identity-client.mjs all depend on this exact shape) are gated separately
+  // from the plain identity flags and can be null while dormant -- only
+  // check their shape when /api/official actually reports them present,
+  // so this stays honest about "dormant" vs "changed" rather than treating
+  // a currently-dormant door as a live-truth failure.
+  const codingDoors = official.identity?.coding_client_doors;
+  if (codingDoors) {
+    const domain = String(official.domain ?? "");
+    for (const doorName of ["register", "rotate", "recovery", "pair"]) {
+      requireClaim(
+        codingDoors[doorName] === `${domain}/api/${doorName}`,
+        `/api/official identity.coding_client_doors.${doorName} changed`,
+      );
+    }
+    requireClaim(
+      Array.isArray(codingDoors.client_classes)
+        && codingDoors.client_classes.includes("coding_persistent")
+        && codingDoors.client_classes.includes("coding_ephemeral"),
+      "/api/official identity.coding_client_doors.client_classes changed",
+    );
+    requireClaim(
+      codingDoors.registration_requires_human_approved === true,
+      "/api/official identity.coding_client_doors.registration_requires_human_approved changed",
+    );
+    requireClaim(
+      codingDoors.key_and_codes_shown_exactly_once === true,
+      "/api/official identity.coding_client_doors.key_and_codes_shown_exactly_once changed",
+    );
+  }
+
   const normalizedLlms = compact(llmsText);
+
+  requireClaim(
+    /eight one-use recovery codes/iu.test(normalizedLlms),
+    "recovery-code count must remain eight",
+  );
 
   // The listing-fee sentence must agree with official.listing_fee_usdc's own
   // live value, not a separately hardcoded "$1" that could go stale.

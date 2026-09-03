@@ -6,7 +6,7 @@ import { compareVersions, parseVersion } from "../scripts/lib/semver.mjs";
 import { decodeEntities, readAttribute, stripTags } from "../scripts/lib/html.mjs";
 import { parseChangelogEntries } from "../scripts/lib/changelog.mjs";
 
-const COMMANDS = ["help", "links", "schedule", "update", "changelog", "store"];
+const COMMANDS = ["help", "links", "setup", "connect", "key", "schedule", "update", "changelog", "store"];
 
 test("semver: parses and compares x.y.z versions", () => {
   assert.deepEqual(parseVersion("2.3.0"), [2, 3, 0]);
@@ -78,20 +78,24 @@ test("no buy, donate, follow, or live command exists in this skill", async () =>
   }
 });
 
-test("help and SETUP.md both name setup, connect, and key as not-yet-shipped", async () => {
+test("help and SETUP.md both name setup, connect, and key as shipped commands", async () => {
   const help = await readFile(new URL("../scripts/help.mjs", import.meta.url), "utf8");
   for (const name of ["setup", "connect", "key"]) {
-    assert.match(help, new RegExp(`"${name}"`, "u"), `help.mjs lists ${name} as coming`);
+    assert.match(help, new RegExp(`"${name}`, "u"), `help.mjs lists ${name}`);
   }
+  assert.doesNotMatch(help, /Coming in a later release/iu, "help.mjs no longer defers these commands");
   const setup = await readFile(new URL("../SETUP.md", import.meta.url), "utf8");
-  assert.match(setup, /not in this release/u);
+  assert.doesNotMatch(setup, /not in this release/u);
+  for (const name of ["setup", "connect", "key"]) {
+    assert.match(setup, new RegExp(`\`${name}`, "u"), `SETUP.md names ${name}`);
+  }
 });
 
 test("SKILL.md carries Life here and Connector setup in the market's own words", async () => {
   const skill = await readFile(new URL("../SKILL.md", import.meta.url), "utf8");
   assert.match(skill, /^## Life here$/mu);
   assert.match(skill, /^## Connector setup$/mu);
-  assert.match(skill, /pull request #36/u);
+  assert.match(skill, /real commands now/iu);
   assert.match(skill, /browser pages/iu);
   assert.match(skill, /will ever[\s\S]{0,40}(?:show|store)[\s\S]{0,80}merchant key/iu);
 });
