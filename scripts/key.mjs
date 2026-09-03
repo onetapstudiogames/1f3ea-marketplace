@@ -182,12 +182,32 @@ async function status() {
  * label matches, OR the probe could not complete at all (a bad/dead key, a
  * network error) -- in which case there is nothing this check can validate,
  * and the command below will surface its own error if the key truly does
- * not work. Returns `false`, having already printed the identical refusal
- * status() prints and set `process.exitCode`, only on a CONFIRMED mismatch.
+ * not work. Returns `false`, having already printed the same core mismatch
+ * message status() prints (prefixed here with "key: " and sent to stderr,
+ * not status()'s stdout -- status() only ever REPORTS this mismatch, since
+ * it has nothing else to do; this function actively REFUSES to let
+ * rotate()/recoverGenerate() act on the key at all, so it is not truly the
+ * identical wording, only the same underlying fact) and set
+ * `process.exitCode`, only on a CONFIRMED mismatch.
+ *
+ * `label` (optional, e.g. "key rotate"), when passed, also discloses --
+ * once, right after the probe -- that this GET /api/me read ran at all:
+ * without it, rotate()/recoverGenerate() below made this same read
+ * status() already discloses (skills/key/SKILL.md: "One authenticated
+ * `GET /api/me` read; reports only whether the stored key works") with no
+ * equivalent word said about rotate/recover generate doing the exact same
+ * read first. This says only what the market's own /api/me read actually
+ * does per identity-probe.mjs's own doc comment -- a single authenticated
+ * read, nothing else -- never a claim about waking timers or advancing a
+ * fee-credit marker, which is a DIFFERENT project's (the city's) /api/me,
+ * not this market's.
  */
-async function refuseOnHandleMismatch(handle, merchantKey) {
+async function refuseOnHandleMismatch(handle, merchantKey, label) {
   const probe = await probeMe(origin, merchantKey, { allowOrigin })
-  if (!probe.ok) return true
+  if (!probe.ok) {
+    if (label) console.log(`${label}: one me read: FAILED (${probe.error}) -- proceeding, since there is nothing this check can validate.`)
+    return true
+  }
   if (probe.handle && probe.handle !== handle) {
     console.error(
       `key: stored key: works, but authenticates as "${probe.handle}", not "${handle}" -- the vault entry ` +
@@ -196,6 +216,7 @@ async function refuseOnHandleMismatch(handle, merchantKey) {
     process.exitCode = 1
     return false
   }
+  if (label) console.log(`${label}: one me read: OK (handle: ${probe.handle ?? handle}).`)
   return true
 }
 
@@ -237,7 +258,7 @@ async function rotate() {
   if (!handle) return
   const merchantKey = requireStoredKey(handle)
   if (!merchantKey) return
-  if (!(await refuseOnHandleMismatch(handle, merchantKey))) return
+  if (!(await refuseOnHandleMismatch(handle, merchantKey, 'key rotate'))) return
   const clientClass = requireStoredClientClass(handle)
   if (!clientClass) return
   const args = [
@@ -252,7 +273,7 @@ async function recoverGenerate() {
   if (!handle) return
   const merchantKey = requireStoredKey(handle)
   if (!merchantKey) return
-  if (!(await refuseOnHandleMismatch(handle, merchantKey))) return
+  if (!(await refuseOnHandleMismatch(handle, merchantKey, 'key recover generate'))) return
   // The market's own /api/recovery `generate` action requires client_class
   // too (see identity-client.mjs's recoverGenerate comment) -- default it
   // from the same stored vault entry requireStoredKey above already found,

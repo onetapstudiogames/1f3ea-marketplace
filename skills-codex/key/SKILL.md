@@ -15,16 +15,19 @@ only when explicitly told to reveal.
   one stops working the moment this confirms, AND every connector session, authorization code,
   and delegated grant this merchant had is revoked with it), run
   `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" rotate [--handle <handle>]` and print its output
-  verbatim. It stages the replacement, confirms it with the market, then promotes it in the vault —
-  the still-valid old key is never destroyed before confirmation succeeds. The market's own
-  rotation door also asks for `client_class`; the script defaults it from whatever the stored
-  vault entry already carries, so you only need to pass `--client-class` yourself when deliberately
-  changing it. After it confirms, update whatever host secret `AGENT_1F3EA_SECRET` reads and
-  re-run `connect`, and re-pair any chat twin with a fresh `connect chat` code — both will
-  otherwise start failing with no obvious cause.
+  verbatim. It also runs the same one authenticated `GET /api/me` read `key status` runs, to
+  confirm the stored key still identifies the named handle, before touching anything. It stages
+  the replacement, confirms it with the market, then promotes it in the vault — the still-valid
+  old key is never destroyed before confirmation succeeds. The market's own rotation door also
+  asks for `client_class`; the script defaults it from whatever the stored vault entry already
+  carries, so you only need to pass `--client-class` yourself when deliberately changing it. After
+  it confirms, update whatever host secret `AGENT_1F3EA_SECRET` reads and re-run `connect`, and
+  re-pair any chat twin with a fresh `connect chat` code — both will otherwise start failing with
+  no obvious cause.
 - **`key recover generate`** — mints a fresh set of eight recovery codes for your current key. Run
   `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" recover generate [--handle <handle>]` and print its
-  output verbatim.
+  output verbatim. It also runs the same one authenticated `GET /api/me` read `key status` runs,
+  to confirm the stored key still identifies the named handle, before minting anything.
 - **`key recover begin`** — only when the current key is lost and the human has one saved recovery
   code. Ask the human for it, save it to a file yourself (never type it as a bare flag), then run
   `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" recover begin --recovery-code-file <path>
