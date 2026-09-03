@@ -26,9 +26,9 @@
 //     --client-class coding_persistent \
 //     --merchant-key-file /path/to/key   (or - for stdin, or set AGENT_1F3EA_SECRET) [--reveal]
 //   node identity-client.mjs recover generate --origin https://1f3ea.com \
-//     --merchant-key-file /path/to/key [--reveal]
+//     --client-class coding_persistent --merchant-key-file /path/to/key [--reveal]
 //   node identity-client.mjs recover begin --origin https://1f3ea.com \
-//     --recovery-code-file /path/to/code [--reveal]
+//     --client-class coding_persistent --recovery-code-file /path/to/code [--reveal]
 //   node identity-client.mjs pair --origin https://1f3ea.com \
 //     --merchant-key-file /path/to/key
 //
@@ -79,6 +79,23 @@ const RECOVERY_CODE_RE = /^1f3ea_rc_[0-9a-f]{64}$/u
 // still normalize it further; see register() below, which always trusts
 // the server's own answer as the identity of record, not this local check).
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/u
+
+// Reserved so a real merchant's handle can never collide with this script's
+// OWN staging-label namespace (pendingLabel below stages an in-flight
+// registration/rotation/recovery under `<handle>--pending-<kind>` or, for
+// registration, `<handle>--pending-registration-<hex>`). HANDLE_RE alone
+// permits this sequence -- it allows consecutive hyphens and imposes no
+// reserved-suffix rule -- so without this separate check a handle like
+// "agent--pending-rotation" would be a legal registration that then reads,
+// to every consumer of listVaultLabels/isPendingLabel below, as an
+// abandoned staging entry rather than a real identity: it would be silently
+// filtered out of setup.mjs's duplicate-identity guard, which exists
+// specifically to stop a second, permanent, unrecoverable merchant from
+// being registered next to one that already exists. Checked at every point
+// a handle is validated in this file (both the requested spelling and the
+// market's own confirmed spelling), so the reservation holds regardless of
+// what the market itself would otherwise accept.
+const RESERVED_HANDLE_SUBSTRING_RE = /--pending-/u
 
 // The one legal (letter-first) environment variable name used everywhere a
 // merchant key is read from the host's own secret store -- by the printed
@@ -284,12 +301,20 @@ function pendingLabel(handle, kind) {
 }
 
 /**
- * True for a staging label (`pendingLabel` above), never a real registered
- * identity. Covers every kind `pendingLabel` can produce, including the
- * per-run suffixed registration form -- an abandoned registration staging
- * entry (a run that died between staging and promotion) must never trip
- * setup.mjs's duplicate-identity guard (`listVaultLabels` filters through
- * this) the way a genuine second identity would.
+ * A LABEL-TEXT heuristic for "this looks like a staging label" -- covers
+ * every kind `pendingLabel` above can produce, including the per-run
+ * suffixed registration form. Used by listVaultLabels below ONLY as a
+ * fallback for an entry it cannot otherwise decode (a bare `cmdkey /list`
+ * scrape on win32, or a stored bundle this run's platform cannot read back).
+ * It is deliberately NOT the primary source of truth: HANDLE_RE alone would
+ * allow a real merchant to register a handle that happens to end in one of
+ * these suffixes (e.g. "agent--pending-rotation"), and
+ * RESERVED_HANDLE_SUBSTRING_RE above closes that off going forward, but this
+ * function must still cope with any handle already in the wild -- so
+ * listVaultLabels prefers the `kind: 'staging'` marker storeSecret writes
+ * into the bundle itself (pendingLabel's three callers all pass it) wherever
+ * the backend lets it read that marker back, and falls back to this suffix
+ * test only when it cannot.
  */
 function isPendingLabel(label) {
   return /--pending-(?:rotation|recovery|registration(?:-[0-9a-f]+)?)$/u.test(label)
@@ -308,18 +333,23 @@ function isPendingLabel(label) {
 // on a non-English Windows install the literal "Target:" label this script
 // parses for never appears, so scraping it alone silently returns nothing,
 // language-dependently. Instead, storeSecret and deleteSecret below keep a
-// small non-secret index file -- ~/.1f3ea/vault-index.json, labels only,
-// never a key or recovery code -- that setup.mjs's duplicate-identity guard
-// reads through listVaultLabels. It is a heuristic, not a source of truth:
-// it can go stale if an entry is removed by some other tool (Keychain
-// Access.app, Windows Credential Manager's own UI, `security`/`cmdkey` by
-// hand), and listVaultLabels below treats that as fine to err toward, since
-// the whole point is only ever to make setup ask for --new-identity one
-// time too many, never to silently register a real duplicate merchant. On
-// win32, listVaultLabels unions this index with whatever `cmdkey /list`
-// scraping does find, rather than depending on the index alone -- the index
-// is best-effort too (a write failure here is never fatal), so neither
-// source alone is trusted as complete.
+// small non-secret index file -- ~/.1f3ea/vault-index.json, labels plus a
+// `staging` marker, never a key or recovery code -- that setup.mjs's
+// duplicate-identity guard reads through listVaultLabels. It is a
+// heuristic, not a source of truth: it can go stale if an entry is removed
+// by some other tool (Keychain Access.app, Windows Credential Manager's own
+// UI, `security`/`cmdkey` by hand), and listVaultLabels below treats that as
+// fine to err toward, since the whole point is only ever to make setup ask
+// for --new-identity one time too many, never to silently register a real
+// duplicate merchant. On win32, listVaultLabels unions this index with
+// whatever `cmdkey /list` scraping does find, rather than depending on the
+// index alone -- the index is best-effort too (a write failure here is
+// never fatal), so neither source alone is trusted as complete. The
+// `staging` marker on each entry is what listVaultLabels prefers over
+// isPendingLabel's label-text guess (see its own doc comment) -- it comes
+// from the bundle's own `kind` field, recorded here at write time so
+// listVaultLabels never has to decode the secret itself just to tell a real
+// merchant from an in-flight staging copy.
 
 function vaultIndexPath(homeDir = homedir()) {
   return join(homeDir, '.1f3ea', 'vault-index.json')
@@ -332,6 +362,27 @@ function readVaultIndex(homeDir) {
   } catch {
     return {}
   }
+}
+
+/**
+ * Normalizes one origin's raw vault-index.json entries -- an array that may
+ * mix legacy bare-string entries (written before this index carried a
+ * `staging` marker) with the current `{ label, staging }` object form --
+ * into a Map from label to `{ staging }`. A legacy string entry's staging
+ * status is unknown (`staging: undefined`), which listVaultLabels below
+ * treats as "fall back to the isPendingLabel suffix guess for this one",
+ * exactly like an entry it cannot decode at all.
+ */
+function vaultIndexEntriesToMap(entries) {
+  const map = new Map()
+  for (const entry of entries) {
+    if (typeof entry === 'string') {
+      map.set(entry, { staging: undefined })
+    } else if (entry && typeof entry === 'object' && typeof entry.label === 'string') {
+      map.set(entry.label, { staging: entry.staging === true })
+    }
+  }
+  return map
 }
 
 // updateVaultIndex is a read-modify-write over one shared file with no
@@ -408,9 +459,14 @@ function withFileLock(lockPath, fn) {
   }
 }
 
-function setsEqual(a, b) {
+/** Compares two label->{staging} Maps (as built by vaultIndexEntriesToMap / mutated in place below). */
+function labelMapsEqual(a, b) {
   if (a.size !== b.size) return false
-  for (const value of a) if (!b.has(value)) return false
+  for (const [label, meta] of a) {
+    const otherMeta = b.get(label)
+    if (!otherMeta) return false
+    if (Boolean(otherMeta.staging) !== Boolean(meta.staging)) return false
+  }
   return true
 }
 
@@ -439,19 +495,19 @@ function updateVaultIndex(origin, label, homeDir, mutate) {
     const path = vaultIndexPath(homeDir)
 
     const peekIndex = readVaultIndex(homeDir)
-    const peekLabels = new Set(Array.isArray(peekIndex[origin]) ? peekIndex[origin] : [])
-    const probeLabels = new Set(peekLabels)
+    const peekLabels = vaultIndexEntriesToMap(Array.isArray(peekIndex[origin]) ? peekIndex[origin] : [])
+    const probeLabels = new Map(peekLabels)
     mutate(probeLabels, label)
-    if (setsEqual(probeLabels, peekLabels)) return
+    if (labelMapsEqual(probeLabels, peekLabels)) return
 
     mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
     withFileLock(`${path}.lock`, () => {
       const index = readVaultIndex(homeDir)
-      const labels = new Set(Array.isArray(index[origin]) ? index[origin] : [])
-      const before = new Set(labels)
+      const labels = vaultIndexEntriesToMap(Array.isArray(index[origin]) ? index[origin] : [])
+      const before = new Map(labels)
       mutate(labels, label)
-      if (setsEqual(labels, before)) return
-      index[origin] = [...labels]
+      if (labelMapsEqual(labels, before)) return
+      index[origin] = [...labels].map(([entryLabel, meta]) => ({ label: entryLabel, staging: meta.staging === true }))
       writeFileSync(path, `${JSON.stringify(index, null, 2)}\n`, { mode: 0o600 })
     })
   } catch {
@@ -567,16 +623,20 @@ function storeSecret(origin, label, payload, deps = {}) {
   const os = deps.platform ?? platform()
   const serialized = JSON.stringify(payload)
   const encoded = Buffer.from(serialized, 'utf8').toString('base64')
+  // Recorded into the non-secret index below so listVaultLabels can tell a
+  // staging entry from a real merchant without decoding the secret store
+  // itself -- see the "Non-secret vault index" comment above.
+  const staging = payload?.kind === 'staging'
   if (os === 'win32') {
     const target = vaultTarget(origin, label)
     writeWindowsCredential(execImpl, target, label, encoded)
-    updateVaultIndex(origin, label, deps.homeDir, (labels, thisLabel) => labels.add(thisLabel))
+    updateVaultIndex(origin, label, deps.homeDir, (labels, thisLabel) => labels.set(thisLabel, { staging }))
     return `Windows Credential Manager (target "${target}", value base64-encoded JSON)`
   }
   if (os === 'darwin') {
     const service = vaultTarget(origin, label)
     writeMacKeychainCredential(execImpl, service, label, encoded)
-    updateVaultIndex(origin, label, deps.homeDir, (labels, thisLabel) => labels.add(thisLabel))
+    updateVaultIndex(origin, label, deps.homeDir, (labels, thisLabel) => labels.set(thisLabel, { staging }))
     return `macOS Keychain (service "${service}", account "${label}")`
   }
   const filePath = credentialsFilePath(origin, label, deps.homeDir)
@@ -960,17 +1020,36 @@ function deleteSecret(origin, label, deps = {}) {
 }
 
 /**
+ * True when `label` should be excluded from listVaultLabels' result --
+ * i.e. it is a staging copy, not a real registered identity. Prefers the
+ * `staging` marker `indexMap` carries for this label (set from the bundle's
+ * own `kind` field at write time -- see storeSecret above), since that is
+ * data, not a guess about what the label text looks like: a real merchant
+ * whose handle happens to end in "--pending-rotation" or similar has
+ * `staging: false` recorded for it and is never dropped this way. Falls
+ * back to the isPendingLabel suffix heuristic only when `indexMap` has no
+ * entry for this label at all, or its staging status is unknown (a legacy
+ * index entry written before this marker existed, or -- on win32 -- a label
+ * `cmdkey /list` found that the index never recorded).
+ */
+function isStagingLabel(label, indexMap) {
+  const meta = indexMap.get(label)
+  if (meta && typeof meta.staging === 'boolean') return meta.staging
+  return isPendingLabel(label)
+}
+
+/**
  * Lists every label this host's vault currently holds for `origin`,
- * excluding staging labels (`pendingLabel` above) -- never the exact-handle
- * lookup readSecret already does, but a genuine enumeration of "does
- * anything else already exist here", so setup.mjs's duplicate-identity
- * guard can refuse a fresh registration under a different handle instead of
- * silently creating a second, permanent, unrecoverable merchant next to one
- * that already exists. Never throws: an enumeration failure (no `cmdkey` on
- * PATH, an unreadable directory, a missing index) is treated as "found
- * nothing", the same fail-open behavior that guard already accepts for a
- * missing setup-state.json -- the guard exists to catch the common case
- * (state lost, vault intact), not to be a perfect audit.
+ * excluding staging labels -- never the exact-handle lookup readSecret
+ * already does, but a genuine enumeration of "does anything else already
+ * exist here", so setup.mjs's duplicate-identity guard can refuse a fresh
+ * registration under a different handle instead of silently creating a
+ * second, permanent, unrecoverable merchant next to one that already
+ * exists. Never throws: an enumeration failure (no `cmdkey` on PATH, an
+ * unreadable directory, a missing index) is treated as "found nothing", the
+ * same fail-open behavior that guard already accepts for a missing
+ * setup-state.json -- the guard exists to catch the common case (state
+ * lost, vault intact), not to be a perfect audit.
  */
 function listVaultLabels(origin, deps = {}) {
   const execImpl = deps.execFileSync ?? execFileSync
@@ -1002,17 +1081,17 @@ function listVaultLabels(origin, deps = {}) {
       // rather than reporting an empty result outright.
     }
     const vaultIndex = readVaultIndex(deps.homeDir)
-    const fromIndex = Array.isArray(vaultIndex[origin]) ? vaultIndex[origin] : []
-    const labels = new Set([...fromCmdkey, ...fromIndex])
-    return [...labels].filter(label => !isPendingLabel(label))
+    const indexMap = vaultIndexEntriesToMap(Array.isArray(vaultIndex[origin]) ? vaultIndex[origin] : [])
+    const labels = new Set([...fromCmdkey, ...indexMap.keys()])
+    return [...labels].filter(label => !isStagingLabel(label, indexMap))
   }
   if (os === 'darwin') {
     const index = readVaultIndex(deps.homeDir)
-    const labels = Array.isArray(index[origin]) ? index[origin] : []
-    return labels.filter(label => !isPendingLabel(label))
+    const indexMap = vaultIndexEntriesToMap(Array.isArray(index[origin]) ? index[origin] : [])
+    return [...indexMap.keys()].filter(label => !isStagingLabel(label, indexMap))
   }
-  const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
   const dir = join(deps.homeDir ?? homedir(), '.1f3ea', 'credentials')
+  const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
   const prefix = `${safeOrigin}__`
   let entries
   try {
@@ -1020,10 +1099,27 @@ function listVaultLabels(origin, deps = {}) {
   } catch {
     return []
   }
-  return entries
+  const labels = entries
     .filter(name => name.startsWith(prefix) && name.endsWith('.json'))
     .map(name => name.slice(prefix.length, -'.json'.length))
-    .filter(label => !isPendingLabel(label))
+  // The file backend can decode the bundle directly, so it is preferred
+  // over the label-text guess here too -- reading the stored `kind` is no
+  // more expensive than the readdir/JSON.parse this already does, and it
+  // is the same distinction storeSecret's index entry encodes for the
+  // win32/darwin backends above.
+  return labels.filter(label => {
+    try {
+      const raw = (deps.readFileSync ?? readFileSync)(credentialsFilePath(origin, label, deps.homeDir), 'utf8')
+      const parsed = JSON.parse(raw)
+      if (parsed && typeof parsed === 'object' && typeof parsed.kind === 'string') {
+        return parsed.kind !== 'staging'
+      }
+    } catch {
+      // Unreadable or undecodable -- fall back to the suffix heuristic below,
+      // same as an entry listVaultLabels cannot otherwise account for.
+    }
+    return !isPendingLabel(label)
+  })
 }
 
 // --- HTTP -----------------------------------------------------------------
@@ -1081,8 +1177,12 @@ async function postJson(origin, path, body) {
   }
   if (!response.ok || !parsed) {
     const error = parsed?.error ?? `HTTP ${response.status} with no readable JSON body`
-    const nextStep = parsed?.next_step ? ` next_step: ${parsed.next_step}` : ''
-    throw new Error(`${path} refused: ${error}.${nextStep}`)
+    // The market's own refusal envelope is exactly {error, reason} (and the
+    // same `reason` on the X-1F3EA-Reason header) -- never `next_step`,
+    // which no door here returns. Surface the machine-readable reason the
+    // market actually publishes instead of a field that can never fire.
+    const reason = typeof parsed?.reason === 'string' ? ` reason: ${parsed.reason}` : ''
+    throw new Error(`${path} refused: ${error}.${reason}`)
   }
   return parsed
 }
@@ -1138,6 +1238,12 @@ async function register(flags) {
       'choose a handle that already matches this rule before asking a human to approve it',
     )
   }
+  if (RESERVED_HANDLE_SUBSTRING_RE.test(handle)) {
+    throw new Error(
+      `--handle "${handle}" contains "--pending-", which this script reserves for its own in-flight ` +
+      'staging labels; nothing was created -- choose a handle that does not contain that sequence',
+    )
+  }
   const clientClass = requireFlag(flags, 'client-class')
   if (clientClass !== 'coding_persistent' && clientClass !== 'coding_ephemeral') {
     throw new Error('--client-class must be coding_persistent or coding_ephemeral')
@@ -1160,7 +1266,11 @@ async function register(flags) {
   const staged = await postJson(origin, '/api/register', {
     action: 'stage',
     handle,
-    ...(model ? { model } : {}),
+    // model must always be PRESENT in the body -- the market's own
+    // validator (requireHandleAndModel) requires the field to be present
+    // ("" is accepted, an absent key is not); sending it conditionally used
+    // to refuse every model-less registration with 400 invalid_identity.
+    model,
     client_class: clientClass,
     human_approved: true,
   })
@@ -1206,7 +1316,7 @@ async function register(flags) {
   // confirm actually succeeds.
   const stagingLabel = pendingLabel(stagedHandle, 'registration')
   storeSecret(origin, stagingLabel, {
-    kind: 'merchant',
+    kind: 'staging',
     handle: stagedHandle,
     client_class: clientClass,
     merchant_key: staged.merchant_key,
@@ -1244,7 +1354,7 @@ async function register(flags) {
   // market's own confirmed spelling somehow failing the rule this script
   // otherwise enforces before ever asking a human to approve a handle, not
   // an expected path.
-  if (!HANDLE_RE.test(finalHandle)) {
+  if (!HANDLE_RE.test(finalHandle) || RESERVED_HANDLE_SUBSTRING_RE.test(finalHandle)) {
     // Best effort: the stage is already confirmed server-side, so this call
     // is unlikely to change anything beyond what confirming already did --
     // it costs nothing to attempt, and matches every other early exit in
@@ -1252,7 +1362,8 @@ async function register(flags) {
     await cancelStage(origin, '/api/register', staged.session, staged.csrf)
     throw new Error(
       `refusing to store or print the handle "${finalHandle}" the market confirmed for this registration: it ` +
-      `does not match the local handle rule ${HANDLE_RE.source}. The merchant was already created ` +
+      `does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" ` +
+      'sequence this script uses for its own in-flight staging labels. The merchant was already created ' +
       'server-side under that exact spelling, and its confirmed merchant key and recovery codes were NOT ' +
       `lost -- they are still stored under the staging label "${stagingLabel}" and nowhere else. Read them ` +
       `back from "${stagingLabel}" and store them under a label of your choosing yourself; this script will ` +
@@ -1313,7 +1424,7 @@ async function rotate(flags) {
   // is never touched; only this staging copy exists, and it is deleted.
   const stagingLabel = pendingLabel(staged.handle, 'rotation')
   storeSecret(origin, stagingLabel, {
-    kind: 'merchant',
+    kind: 'staging',
     handle: staged.handle,
     client_class: clientClass,
     merchant_key: staged.merchant_key,
@@ -1377,7 +1488,18 @@ async function recoverGenerate(flags) {
   if (!merchantKey || !MERCHANT_KEY_RE.test(merchantKey)) {
     throw new Error(`--merchant-key-file (or ${AGENT_SECRET_ENV_VAR}) must point to the current, valid merchant key`)
   }
-  const generated = await postJson(origin, '/api/recovery', { action: 'generate', merchant_key: merchantKey })
+  // The market's own /api/recovery `generate` action requires client_class
+  // (RECOVERY_GENERATE_FIELDS = ['action', 'client_class', 'merchant_key']) --
+  // omitting it is refused 400 invalid_client_class before the key is ever
+  // checked. key.mjs's own `recover generate` defaults this from the vault
+  // entry's stored client_class so a caller rarely has to think about it.
+  const clientClass = requireFlag(flags, 'client-class')
+  if (clientClass !== 'coding_persistent' && clientClass !== 'coding_ephemeral') {
+    throw new Error('--client-class must be coding_persistent or coding_ephemeral')
+  }
+  const generated = await postJson(origin, '/api/recovery', {
+    action: 'generate', client_class: clientClass, merchant_key: merchantKey,
+  })
 
   // Write the fresh codes into the LIVE `handle` entry, not a sibling
   // `${handle}-recovery` label: a caller resuming later (rotate, recover
@@ -1420,15 +1542,29 @@ async function recoverBegin(flags) {
   if (!recoveryCode || !RECOVERY_CODE_RE.test(recoveryCode)) {
     throw new Error('--recovery-code-file must point to a valid, unused recovery code')
   }
+  // The market's own /api/recovery `begin` action requires client_class too
+  // (RECOVERY_BEGIN_FIELDS = ['action', 'client_class', 'recovery_code']) --
+  // omitting it is refused 400 invalid_client_class before the code is ever
+  // checked. Unlike rotate/recover-generate, this is the emergency path an
+  // agent reaches only when its key -- and often its vault entry -- is
+  // already lost, so this script cannot always default it from a stored
+  // entry the way key.mjs's own `recover begin` tries to; it is required
+  // explicitly here.
+  const clientClass = requireFlag(flags, 'client-class')
+  if (clientClass !== 'coding_persistent' && clientClass !== 'coding_ephemeral') {
+    throw new Error('--client-class must be coding_persistent or coding_ephemeral')
+  }
 
-  const staged = await postJson(origin, '/api/recovery', { action: 'begin', recovery_code: recoveryCode })
+  const staged = await postJson(origin, '/api/recovery', {
+    action: 'begin', client_class: clientClass, recovery_code: recoveryCode,
+  })
 
   // Same staging discipline as rotate() above, and for the same reason: the
   // old key still works until confirm below actually succeeds, so the live
   // vault entry must not be touched before that.
   const stagingLabel = pendingLabel(staged.handle, 'recovery')
   storeSecret(origin, stagingLabel, {
-    kind: 'merchant',
+    kind: 'staging',
     handle: staged.handle,
     merchant_key: staged.merchant_key,
     origin,
