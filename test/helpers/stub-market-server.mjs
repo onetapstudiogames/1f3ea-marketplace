@@ -256,8 +256,20 @@ const REGISTER_CONFIRM_BARRIER_TIMEOUT_MS = 10_000
  * omits both options, so this changes nothing about the ~20 other scenarios
  * sharing this stub.
  */
+/**
+ * registerStageHandleOverride (round-6 review, MEDIUM finding): when set,
+ * the `handle` field in the /api/register `stage` RESPONSE is this value
+ * instead of the honestly staged `entry.handle` -- simulating a rogue
+ * market that names a malformed (or `--pending-`-suffixed) handle on stage,
+ * exactly like rotateConfirmHandleOverride/recoveryConfirmHandleOverride
+ * above simulate one lying on confirm. Everything this stub actually stores
+ * server-side (`pendingRegistrations`, `merchants`) stays keyed by the
+ * real, honestly-requested handle. Every other caller omits this option, so
+ * it changes nothing about the ~20 other scenarios sharing this stub.
+ */
 export async function startStubMarketServer({
   registerConfirmBarrier, pairingUnavailable = false, rotateConfirmHandleOverride, recoveryConfirmHandleOverride,
+  registerStageHandleOverride,
 } = {}) {
   const merchants = new Map()
   // Every pending map is keyed by `session` (an opaque value, unrelated to
@@ -333,7 +345,7 @@ export async function startStubMarketServer({
           }
           pendingRegistrations.set(session, entry)
           return send(res, 200, {
-            status: 'staged', handle: entry.handle, client_class: entry.client_class,
+            status: 'staged', handle: registerStageHandleOverride ?? entry.handle, client_class: entry.client_class,
             session, csrf: entry.csrf, expires_in_seconds: CEREMONY_SECONDS,
             merchant_key: entry.merchant_key, recovery_codes: entry.recovery_codes,
             instructions: 'Save the merchant key and all eight recovery codes now; confirm or cancel within the window.',
@@ -591,6 +603,16 @@ export async function startStubMarketServer({
   return {
     origin: `https://localhost:${port}`,
     merchants,
+    // Exposed (round-6 review, LOW finding) so a test can confirm a
+    // cancelled stage is actually GONE server-side -- not just that the
+    // client claimed cancellation -- since cancelStage's own request is
+    // best-effort and swallows every error by design (see its doc comment
+    // in identity-client.mjs): a client that silently failed to send the
+    // cancel at all would otherwise look identical, from the client's own
+    // output, to one that succeeded.
+    pendingRegistrations,
+    pendingRotations,
+    pendingRecoveries,
     close: () => new Promise(resolvePromise => server.close(resolvePromise)),
   }
 }

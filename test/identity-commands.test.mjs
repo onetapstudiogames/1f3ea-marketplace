@@ -154,6 +154,88 @@ test('register --replace-vault-entry deliberately overwrites an existing entry',
   }
 })
 
+// --- Round-6 review, MEDIUM finding: register() used the STAGE response's -
+// staged.handle as a vault label (the pre-flight existing-entry check, and
+// the staging label itself) before any local validation -- unlike its own
+// later check on the CONFIRM response's handle, and unlike rotate()/
+// recoverBegin()'s own checks on their begin responses. A market that
+// stages a malformed (or `--pending-`-suffixed) handle must be refused, the
+// stage cancelled, and nothing written to this vault -- never silently used
+// to look up or write a vault entry.
+
+test(
+  'register refuses when the stage response names a handle that fails the local handle rule, cancels the ' +
+  'stage, and writes nothing to the vault',
+  async () => {
+    const stub = await startStubMarketServer({ registerStageHandleOverride: 'AB' })
+    const home = makeTempHome('register-stage-malformed-')
+    try {
+      const result = await runNode(identityClientPath, [
+        'register', '--origin', stub.origin, '--handle', 'agent-stage-malformed',
+        '--client-class', 'coding_persistent', '--human-approved',
+      ], { env: home.env })
+
+      assert.notEqual(result.status, 0, 'a malformed staged handle must refuse, never be used as a vault label')
+      assert.match(result.stderr, /refusing to act on the handle/u)
+      assert.match(result.stderr, /"AB"/u, 'names the bogus staged handle the stage call actually returned')
+      assert.match(result.stderr, /does not match the local handle rule/u)
+      assertNoSecretLeaked(result, 'register stage-handle malformed')
+
+      // Nothing was ever written under either spelling -- not the
+      // requested handle, not the bogus staged one, not a staging copy for
+      // either.
+      const requested = readSecret(stub.origin, 'agent-stage-malformed', { homeDir: home.dir })
+      assert.equal(requested.found, false, 'the requested handle was never written to')
+      const bogus = readSecret(stub.origin, 'AB', { homeDir: home.dir })
+      assert.equal(bogus.found, false, 'the bogus staged handle was never written to either')
+      const rawLabels = listRawVaultLabels(stub.origin, home.dir)
+      assert.deepEqual(rawLabels, [], 'no staging copy survives this refusal')
+
+      // The stage was actually cancelled server-side -- not just refused
+      // client-side -- so nothing lingers on the market either. cancelStage
+      // swallows its own request failures by design, so this checks the
+      // stub's pending map directly rather than trusting the client's exit
+      // status alone.
+      assert.equal(stub.merchants.size, 0, 'the market never confirmed anything for this staged handle')
+      assert.equal(stub.pendingRegistrations.size, 0, 'the stage itself is gone server-side, not merely refused client-side')
+    } finally {
+      deleteSecret(stub.origin, 'agent-stage-malformed', { homeDir: home.dir })
+      deleteSecret(stub.origin, 'AB', { homeDir: home.dir })
+      home.cleanup()
+      await stub.close()
+    }
+  },
+)
+
+test(
+  'register refuses when the stage response names a handle containing the reserved "--pending-" sequence',
+  async () => {
+    const stub = await startStubMarketServer({ registerStageHandleOverride: 'agent--pending-rotation' })
+    const home = makeTempHome('register-stage-reserved-')
+    try {
+      const result = await runNode(identityClientPath, [
+        'register', '--origin', stub.origin, '--handle', 'agent-stage-reserved',
+        '--client-class', 'coding_persistent', '--human-approved',
+      ], { env: home.env })
+
+      assert.notEqual(result.status, 0)
+      assert.match(result.stderr, /"agent--pending-rotation"/u)
+      assert.match(result.stderr, /reserved "--pending-"/u)
+      assertNoSecretLeaked(result, 'register stage-handle reserved')
+
+      const rawLabels = listRawVaultLabels(stub.origin, home.dir)
+      assert.deepEqual(rawLabels, [], 'no staging copy survives this refusal')
+      assert.equal(stub.merchants.size, 0)
+      assert.equal(stub.pendingRegistrations.size, 0, 'the stage itself is gone server-side, not merely refused client-side')
+    } finally {
+      deleteSecret(stub.origin, 'agent-stage-reserved', { homeDir: home.dir })
+      deleteSecret(stub.origin, 'agent--pending-rotation', { homeDir: home.dir })
+      home.cleanup()
+      await stub.close()
+    }
+  },
+)
+
 // --- register()'s per-run staging label: two concurrent runs for the SAME
 // handle must never share one staging label, or the winner's own cleanup
 // would delete whatever the loser had just staged there (review finding

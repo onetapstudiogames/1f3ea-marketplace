@@ -1468,6 +1468,34 @@ async function register(flags) {
   // call was invoked with (see the module comment on HANDLE_RE above).
   const stagedHandle = typeof staged.handle === 'string' ? staged.handle : handle
 
+  // Validated here, before stagedHandle is ever used as a vault label -- for
+  // the pre-flight existing-entry check immediately below, the staging
+  // copy, and later the live promotion -- the same discipline rotate()/
+  // recoverBegin() apply to their own staged handles, and this function
+  // already applies to its own CONFIRMED handle further down. Defense in
+  // depth against the market's own stage response somehow normalizing the
+  // requested handle (already validated above) into something that fails
+  // this same rule (reachable only through a compromised 1f3ea.com or an
+  // --allow-origin the operator passed, never through an honest server):
+  // without it, a wrong or hostile normalized handle in the stage response
+  // would be used to look up, and later write, a vault entry under that
+  // label. Nothing has been written to this vault yet at this point, so the
+  // registration is simply cancelled and refused.
+  if (!HANDLE_RE.test(stagedHandle) || RESERVED_HANDLE_SUBSTRING_RE.test(stagedHandle)) {
+    await cancelStage(origin, '/api/register', staged.session, staged.csrf)
+    throw new Error(
+      // stagedHandle is JSON.stringify'd (not wrapped in manual quotes)
+      // because it has, by definition in this branch, just failed
+      // HANDLE_RE -- it may contain a newline or quote that could
+      // otherwise fabricate an extra line in output the key skill
+      // instructs the agent to relay verbatim.
+      `refusing to act on the handle ${JSON.stringify(stagedHandle)} this registration's stage call named: it ` +
+      `does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" ` +
+      'sequence this script uses for its own in-flight staging labels. The staged registration was ' +
+      'cancelled before anything was written to this vault; nothing was created.',
+    )
+  }
+
   // Same discipline rotate()/recoverBegin() already apply, extended to
   // register() itself: never overwrite whatever the vault already holds
   // under the identity of record without an explicit, deliberate override.
