@@ -7,7 +7,7 @@
 
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -45,6 +45,45 @@ function assertNoSecretLeaked(result, label) {
   assert.doesNotMatch(result.stderr ?? '', NO_SECRET_LITERAL, `${label}: stderr never carries a raw secret`)
 }
 
+/**
+ * Enumerates every RAW label this platform's vault backend currently holds
+ * for `origin` under `homeDir` -- unlike identity-client.mjs's own exported
+ * listVaultLabels, this never filters out staging entries. A test that wants
+ * to assert "no staging copy was left behind, whatever it would have been
+ * named" must not check that through listVaultLabels: that function's whole
+ * job is to hide staging labels, so it would report an empty result whether
+ * or not one actually leaked, making such an assertion vacuous regardless of
+ * label format. This reads the same on-disk/index shapes storeSecret and
+ * deleteSecret in identity-client.mjs maintain (vault-index.json on win32/
+ * darwin, the credentials directory listing everywhere else).
+ */
+function listRawVaultLabels(origin, homeDir) {
+  if (process.platform === 'win32' || process.platform === 'darwin') {
+    let parsed
+    try {
+      parsed = JSON.parse(readFileSync(join(homeDir, '.1f3ea', 'vault-index.json'), 'utf8'))
+    } catch {
+      return []
+    }
+    const entries = Array.isArray(parsed?.[origin]) ? parsed[origin] : []
+    return entries
+      .map(entry => (typeof entry === 'string' ? entry : entry?.label))
+      .filter(label => typeof label === 'string')
+  }
+  const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
+  const dir = join(homeDir, '.1f3ea', 'credentials')
+  const prefix = `${safeOrigin}__`
+  let entries
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return []
+  }
+  return entries
+    .filter(name => name.startsWith(prefix) && name.endsWith('.json'))
+    .map(name => name.slice(prefix.length, -'.json'.length))
+}
+
 // --- register() vault safety: never silently overwrite an existing entry -
 
 test('register refuses to overwrite an existing vault entry under the confirmed handle, and cleans up the staging copy', async () => {
@@ -69,8 +108,20 @@ test('register refuses to overwrite an existing vault entry under the confirmed 
     const stillThere = readSecret(stub.origin, 'agent-collide', { homeDir: home.dir })
     assert.equal(stillThere.value.merchant_key, `1f3ea_sk_${'z'.repeat(48)}`, 'the original entry is untouched')
 
-    const staging = readSecret(stub.origin, 'agent-collide--pending-registration', { homeDir: home.dir })
-    assert.equal(staging.found, false, 'the staging copy was cleaned up, not left behind')
+    // register()'s pre-flight collision check throws BEFORE the staging
+    // label is even computed, so no staging entry is ever written on this
+    // path -- and since pendingLabel mints a random hex suffix for every
+    // registration attempt, checking one fixed bare label (as this used to)
+    // would never actually detect a leak. Enumerate the RAW vault contents
+    // (never filtered through listVaultLabels, which hides staging entries
+    // by design) instead, so this keeps meaning something if a future
+    // change ever did leave a suffixed staging copy orphaned here.
+    const rawLabels = listRawVaultLabels(stub.origin, home.dir)
+    const stagingLabelPattern = /^agent-collide--pending-registration(-[0-9a-f]+)?$/u
+    assert.ok(
+      rawLabels.every(label => !stagingLabelPattern.test(label)),
+      `no staging copy (bare or suffixed) was left behind for this collision path; found: ${JSON.stringify(rawLabels)}`,
+    )
   } finally {
     deleteSecret(stub.origin, 'agent-collide', { homeDir: home.dir })
     deleteSecret(stub.origin, 'agent-collide--pending-registration', { homeDir: home.dir })
@@ -108,8 +159,20 @@ test('register --replace-vault-entry deliberately overwrites an existing entry',
 // would delete whatever the loser had just staged there (review finding
 // "two concurrent register runs share one staging label").
 
-test('two concurrent register runs for the same handle: the winner promotes, the loser refuses and still names its own untouched staging copy', async () => {
-  const stub = await startStubMarketServer()
+test('two concurrent register runs for the same handle: the winner promotes, the loser refuses and cleans up after itself', async () => {
+  // registerConfirmBarrier forces the two real subprocesses' confirm calls
+  // to genuinely overlap at the server -- see the stub's own doc comment.
+  // 'confirm' is register()'s LAST network call before its own local
+  // pre-flight vault check, so a confirm reaching the barrier already
+  // proves both processes independently staged and pre-flight-checked
+  // without either seeing the other's work; without this, a loaded runner
+  // could let one subprocess finish its entire run before the other even
+  // got its stage() response back, making this test flaky about which
+  // codepath it actually exercises rather than about the property it means
+  // to verify (reproduced from a real CI failure, not theorized).
+  const stub = await startStubMarketServer({
+    registerConfirmBarrier: { handle: 'race-probe-handle', count: 2 },
+  })
   const home = makeTempHome('register-race-')
   try {
     const args = [
@@ -118,7 +181,10 @@ test('two concurrent register runs for the same handle: the winner promotes, the
     ]
     // Two real, concurrent subprocesses racing the same requested handle
     // against the same stub server and the same shared vault home -- the
-    // actual shape of the finding, not a mocked stand-in for it.
+    // actual shape of the finding, not a mocked stand-in for it. The
+    // barrier above is what makes the overlap deterministic; these are
+    // still real, separate `node` processes actually racing each other
+    // through the client's real vault-locking code once it releases them.
     const [first, second] = await Promise.all([
       runNode(identityClientPath, args, { env: home.env }),
       runNode(identityClientPath, args, { env: home.env }),
@@ -129,35 +195,41 @@ test('two concurrent register runs for the same handle: the winner promotes, the
     assert.equal(winner.status, 0, `exactly one run must succeed (stderr: ${first.stderr}\n---\n${second.stderr})`)
     assert.notEqual(loser.status, 0, 'the other run must refuse rather than silently overwrite')
 
-    // Two outcomes are both a correct refusal, and which one actually
-    // happens depends on how tightly the two real subprocesses' stage
-    // requests interleave on this host/CI runner -- not on anything this
-    // client controls: (a) both stage calls land before either confirms,
-    // so the market accepts both stages and the race is decided by THIS
-    // client's own per-(origin, handle) vault lock at the final promote
-    // step ("now exists"); or (b) the winner's entire stage+confirm
-    // sequence completes before the loser's own stage call ever reaches
-    // the market, so the market's own stage-time duplicate-handle check
-    // refuses the loser first ("already taken"), before it ever reaches a
-    // staging label at all. Both are the property this test actually
-    // verifies -- no duplicate merchant is ever created -- so assert on
-    // whichever one actually happened rather than assuming outcome (a).
-    const stagingLabelMatch = /staging label "([^"]+)"/u.exec(loser.stderr)
-    if (stagingLabelMatch) {
-      assert.match(loser.stderr, /now exists/u, 'names the client-side vault race, not a generic failure')
-      const [, stagingLabel] = stagingLabelMatch
-      assert.match(
-        stagingLabel,
-        /^race-probe-handle--pending-registration-[0-9a-f]+$/u,
-        'the staging label is the per-run suffixed form, not the bare (shareable) one',
-      )
-      const staging = readSecret(stub.origin, stagingLabel, { homeDir: home.dir })
-      assert.equal(staging.found, true, "the loser's own staging copy is still there -- the winner's cleanup never touched it")
+    // The market's own confirm enforces handle uniqueness atomically for two
+    // concurrent stages of the same not-yet-confirmed handle (see the
+    // stub's own comment: handle_taken is checked against CONFIRMED
+    // merchants only, at both stage and confirm time), so with the barrier
+    // above forcing genuine overlap, the loser's own confirm is the one the
+    // market refuses -- and register()'s own catch on a failed confirm
+    // deletes ITS OWN staging copy before rethrowing (identity-client.mjs
+    // register()), so no staging copy should survive this path either. A
+    // third shape -- "could not acquire the per-handle vault lock" -- is a
+    // real, separately-reproduced refusal from promoteReplacementKey's own
+    // file lock (review finding 13) and is accepted here too; only in that
+    // branch does a staging copy legitimately survive (the loser's own,
+    // untouched by the winner).
+    const lockTimeout = /could not acquire the per-handle vault lock/u.test(loser.stderr)
+    assert.match(
+      loser.stderr,
+      /already taken|handle_taken|could not acquire the per-handle vault lock/u,
+      'names a legitimate refusal, not an unrelated failure',
+    )
+
+    const rawLabels = listRawVaultLabels(stub.origin, home.dir)
+    const stagingLabelPattern = /^race-probe-handle--pending-registration-[0-9a-f]+$/u
+    if (lockTimeout) {
+      const survivors = rawLabels.filter(label => stagingLabelPattern.test(label))
+      assert.equal(survivors.length, 1, "exactly the loser's own untouched staging copy survives this refusal shape")
+      const staging = readSecret(stub.origin, survivors[0], { homeDir: home.dir })
       assert.equal(staging.value.handle, 'race-probe-handle')
       assert.ok(staging.value.merchant_key, 'the confirmed replacement key is actually recoverable from the named label')
-      deleteSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+      deleteSecret(stub.origin, survivors[0], { homeDir: home.dir })
     } else {
-      assert.match(loser.stderr, /already taken|handle_taken/u, 'names the market\'s own duplicate-handle refusal')
+      assert.match(loser.stderr, /already taken|handle_taken/u, "names the market's own duplicate-handle refusal")
+      assert.ok(
+        rawLabels.every(label => !stagingLabelPattern.test(label)),
+        `a confirm-time refusal cleans up its own staging copy -- none should survive; found: ${JSON.stringify(rawLabels)}`,
+      )
     }
 
     assert.equal(stub.merchants.size, 1, 'exactly one merchant was registered by the race, regardless of which refusal fired')
@@ -177,6 +249,23 @@ test('register refuses a handle that does not match the market\'s handle rule, b
   ], { env: NOT_A_REAL_ORIGIN_ENV })
   assert.notEqual(result.status, 0)
   assert.match(result.stderr, /does not match the market's handle rule/u)
+})
+
+// --- The "--pending-" namespace is reserved: HANDLE_RE alone would accept -
+// a handle like "agent--pending-rotation" (23 chars, lowercase letters and
+// hyphens), which would then read to isPendingLabel's suffix guess as an
+// abandoned staging entry rather than a real merchant. register() must
+// refuse it outright, before any network call, rather than let a real
+// merchant register under a handle its own vault machinery cannot
+// distinguish from staging.
+
+test('register refuses a handle containing the reserved "--pending-" sequence, before any network call', async () => {
+  const result = await runNode(identityClientPath, [
+    'register', '--origin', 'https://example.invalid', '--allow-origin', 'https://example.invalid',
+    '--handle', 'agent--pending-rotation', '--client-class', 'coding_persistent', '--human-approved',
+  ], { env: NOT_A_REAL_ORIGIN_ENV })
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /reserves.*--pending-|--pending-.*reserves/u)
 })
 
 test('setup.mjs refuses a handle that does not match the market\'s handle rule before ever asking for approval', async () => {
@@ -786,7 +875,7 @@ test('key status reports a mismatch instead of claiming success when the stored 
     }, { homeDir: home.dir })
 
     const result = await runNode(keyPath, ['status', '--origin', stub.origin, '--handle', 'agent-gamma'], { env: home.env })
-    assert.equal(result.status, 0, result.stderr)
+    assert.notEqual(result.status, 0, 'a handle mismatch is not a successful status check')
     assert.match(result.stdout, /agent-gamma/u)
     assert.match(result.stdout, /agent-delta/u)
     assert.doesNotMatch(result.stdout, /works \(one me read succeeded\)/u, 'never claims plain success on a mismatch')
@@ -814,7 +903,7 @@ test('connect.mjs reports a mismatch instead of claiming OK when the stored key 
     }, { homeDir: home.dir })
 
     const result = await runNode(connectPath, ['--origin', stub.origin, '--handle', 'agent-epsilon'], { env: home.env })
-    assert.equal(result.status, 0, result.stderr)
+    assert.notEqual(result.status, 0, 'a handle mismatch is not a successful connection check')
     assert.match(result.stdout, /MISMATCH/u)
     assert.match(result.stdout, /agent-epsilon/u)
     assert.match(result.stdout, /agent-zeta/u)
@@ -862,9 +951,11 @@ test('setup.mjs refuses to register under a new handle when this origin already 
 })
 
 // A leftover REGISTRATION staging label (a run that died between staging
-// and promotion) is not a real second identity -- isPendingLabel must cover
-// the per-run suffixed registration form the same way it already covers
-// rotation/recovery, or the guard above wrongly refuses a legitimate fresh
+// and promotion) is not a real second identity -- listVaultLabels must
+// exclude it by the `kind: 'staging'` marker its bundle carries (see
+// storeSecret/isStagingLabel in identity-client.mjs), covering the per-run
+// suffixed registration form the same way it already covers rotation/
+// recovery, or the guard above wrongly refuses a legitimate fresh
 // registration because of a label this script itself created and never
 // meant as anything but scratch space.
 
@@ -874,9 +965,14 @@ test('setup.mjs does not treat a leftover registration staging label as a second
   try {
     // Simulates a register() run that staged a bundle and then died before
     // ever confirming or promoting it -- exactly the suffixed label shape
-    // pendingLabel(handle, 'registration') now produces.
+    // AND the `kind: 'staging'` marker pendingLabel's callers now write
+    // (identity-client.mjs register()). Marking staging by data rather than
+    // by label text alone is what lets a REAL merchant's own handle end in
+    // this same suffix shape without being hidden from listVaultLabels --
+    // see the "listVaultLabels ... a real merchant whose handle ends in
+    // --pending-rotation is still listed" tests in identity-client.test.mjs.
     storeSecret(stub.origin, 'agent-abandoned--pending-registration-deadbeef', {
-      kind: 'merchant',
+      kind: 'staging',
       handle: 'agent-abandoned',
       client_class: 'coding_persistent',
       merchant_key: `1f3ea_sk_${'8'.repeat(48)}`,
@@ -931,6 +1027,58 @@ test('runNode does not leak the parent process\'s AGENT_1F3EA_SECRET or IDENTITY
     }
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+// --- Finding 6: connect.mjs chat mints a real, correctly-shaped pairing ---
+// code and never leaks the merchant key while doing it.
+
+test('connect.mjs chat mints a pairing code in the market\'s real shape and never prints the key', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('connect-chat-')
+  try {
+    const merchantKey = `1f3ea_sk_${'3'.repeat(48)}`
+    stub.merchants.set('agent-chat', { merchant_key: merchantKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(stub.origin, 'agent-chat', {
+      kind: 'merchant', handle: 'agent-chat', client_class: 'coding_persistent',
+      merchant_key: merchantKey, recovery_codes: [], origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(connectPath, ['chat', '--origin', stub.origin, '--handle', 'agent-chat'], { env: home.env })
+    assert.equal(result.status, 0, result.stderr)
+    const codeLine = result.stdout.split(/\r?\n/u).map(line => line.trim()).find(line => /^1f3ea_pc_[0-9a-f]{48}$/u.test(line))
+    assert.ok(codeLine, `a pairing code matching the real 1f3ea_pc_<48 hex> shape was printed; got:\n${result.stdout}`)
+    assert.match(result.stdout, /expires_at:/u)
+    assert.match(result.stdout, /I already have a store/u, 'names the human\'s remaining click')
+    assertNoSecretLeaked(result, 'connect.mjs chat')
+  } finally {
+    deleteSecret(stub.origin, 'agent-chat', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+test('connect.mjs chat surfaces the market\'s pairing_unavailable refusal verbatim rather than swallowing it', async () => {
+  const stub = await startStubMarketServer({ pairingUnavailable: true })
+  const home = makeTempHome('connect-chat-unavailable-')
+  try {
+    const merchantKey = `1f3ea_sk_${'4'.repeat(48)}`
+    stub.merchants.set('agent-chat-2', { merchant_key: merchantKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(stub.origin, 'agent-chat-2', {
+      kind: 'merchant', handle: 'agent-chat-2', client_class: 'coding_persistent',
+      merchant_key: merchantKey, recovery_codes: [], origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(connectPath, ['chat', '--origin', stub.origin, '--handle', 'agent-chat-2'], { env: home.env })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /nowhere to be redeemed|pairing code would have/u, 'the real refusal sentence reaches the caller, not a generic failure message')
+    assertNoSecretLeaked(result, 'connect.mjs chat pairing_unavailable')
+  } finally {
+    deleteSecret(stub.origin, 'agent-chat-2', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
   }
 })
 
