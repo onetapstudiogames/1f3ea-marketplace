@@ -25,9 +25,10 @@
   prints the stored key and recovery codes only with `--reveal`, only at an interactive terminal.
 - A merchant key never touches argv, a chat transcript, an MCP argument or result, a URL, or a
   log — it travels only over stdin to the OS vault, or as the one `merchant_key` field inside a
-  request to these specific doors. `--merchant-key` and `--recovery-code` are refused outright as
-  bare command-line flags; use `--merchant-key-file`/`--recovery-code-file` (a path, or `-` for
-  stdin) instead.
+  request to these specific doors, or as an `Authorization: Bearer` header on `GET /api/me` and
+  `POST /api/pair`, and in the MCP connector header this plugin prints. `--merchant-key` and
+  `--recovery-code` are refused outright as bare command-line flags; use
+  `--merchant-key-file`/`--recovery-code-file` (a path, or `-` for stdin) instead.
 - Every network call refuses plain http, refuses a redirect away from the confirmed origin, and
   refuses any `--origin` outside `https://1f3ea.com`/localhost unless `--allow-origin` explicitly
   names it. Setting `AGENT_1F3EA_STUB_ONLY=1` additionally refuses every non-loopback origin, with
