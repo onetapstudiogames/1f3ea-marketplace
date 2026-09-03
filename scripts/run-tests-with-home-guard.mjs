@@ -125,10 +125,24 @@ function formatDiff(diff, before, after) {
  * test that stores a real credential without stubbing out the platform
  * vault call entirely can leak a secret bundle into the operator's real
  * Credential Manager or Keychain while the directory snapshot above sees
- * nothing at all. `{ supported: false }` on every other platform (the file
- * backend has no separate OS-level store; the directory snapshot alone
- * already covers it), and on a `cmdkey`/`security` failure, so a
- * platform this cannot scan never reports a false drift.
+ * nothing at all.
+ *
+ * Returns two independent flags, not one: `supported` is false on any
+ * platform other than win32/darwin -- there is no vault tool to ask at all,
+ * a genuine and successful "nothing to enumerate here." `ok` is false ONLY
+ * when a supported platform's own enumeration tool (`cmdkey`/`security`)
+ * actually failed to run -- distinct from "found nothing," the same
+ * distinction identity-client.mjs's own listVaultLabels/
+ * KeychainEnumerationIncomplete already has to make for these exact same
+ * calls. Collapsing the two (an earlier version of this function returned
+ * `{ supported: false }` for both "nothing to check" and "the tool itself
+ * failed") is wrong in either direction a caller could then fail to
+ * distinguish: a tool failure only on the AFTER read would be read as
+ * "nothing added" (hiding a real leak this whole guard exists to catch),
+ * and a tool failure only on the BEFORE read would report every
+ * legitimately-found AFTER entry as spurious drift. The caller (runGuard
+ * below) refuses to compare -- and fails the run outright -- whenever `ok`
+ * is false, rather than guessing which of those two wrong answers to give.
  */
 function snapshotPlatformVaultTargets() {
   const os = platform()
@@ -137,7 +151,7 @@ function snapshotPlatformVaultTargets() {
     try {
       output = execFileSync('cmdkey', ['/list'], { encoding: 'utf8' })
     } catch {
-      return { supported: false, names: [] }
+      return { supported: true, ok: false, names: [] }
     }
     const names = []
     for (const match of output.matchAll(/Target:\s*(.+)\s*$/gmu)) {
@@ -152,7 +166,7 @@ function snapshotPlatformVaultTargets() {
       if (index !== -1) names.push(target.slice(index))
     }
     names.sort()
-    return { supported: true, names }
+    return { supported: true, ok: true, names }
   }
   if (os === 'darwin') {
     let output
@@ -161,14 +175,27 @@ function snapshotPlatformVaultTargets() {
         encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 10_000,
       })
     } catch {
-      return { supported: false, names: [] }
+      return { supported: true, ok: false, names: [] }
     }
     const names = parseKeychainServiceNames(output)
       .filter(name => name.startsWith(VAULT_TARGET_PREFIX))
       .sort()
-    return { supported: true, names }
+    return { supported: true, ok: true, names }
   }
-  return { supported: false, names: [] }
+  // No vault tool this guard knows how to ask on this platform at all -- a
+  // genuine, successful "nothing to enumerate here," never a failure.
+  return { supported: false, ok: true, names: [] }
+}
+
+function formatEnumerationFailure(before, after) {
+  const tool = platform() === 'win32' ? 'cmdkey /list' : 'security dump-keychain'
+  const failedOn = before.ok === false ? 'BEFORE' : 'AFTER'
+  return (
+    `the platform vault could not be enumerated, this run proves nothing about it (${tool} failed on the ` +
+    `${failedOn} read). A failed enumeration is never silently treated as "found nothing" -- doing that ` +
+    'could either hide a real leak or report every pre-existing entry as spurious drift, depending on ' +
+    'which call failed. Investigate why the enumeration tool failed on this host, then re-run.'
+  )
 }
 
 function diffTargetNames(before, after) {
@@ -249,11 +276,14 @@ function isLoopbackOrigin(origin) {
 /**
  * The `1f3ea:` vault target names in `targetsBefore` (a snapshotPlatformVaultTargets()
  * result) that name a loopback origin -- test residue that was already in the real
- * platform vault before this run started. `{ supported: false }` (or any name this
- * host's parser could not classify) yields an empty result rather than a false positive.
+ * platform vault before this run started. `{ supported: false }` (nothing to enumerate
+ * on this platform) or `{ ok: false }` (the enumeration tool itself failed -- names is
+ * already empty in that case, so this never false-flags, but runGuard below still fails
+ * the whole run separately rather than trusting this empty result as "found nothing")
+ * yields an empty result rather than a false positive.
  */
 function findPreexistingLoopbackLeaks(targetsBefore) {
-  if (!targetsBefore.supported) return []
+  if (!targetsBefore.supported || targetsBefore.ok === false) return []
   return targetsBefore.names.filter(name => {
     const parsed = parseVaultTargetName(name)
     return parsed !== null && isLoopbackOrigin(parsed.origin)
@@ -293,13 +323,22 @@ function runGuard() {
   const after = snapshotDir(vaultDir)
   const diff = diffSnapshots(before, after)
   const targetsAfter = snapshotPlatformVaultTargets()
-  const targetDiff = diffTargetNames(targetsBefore, targetsAfter)
-  const targetsComparable = targetsBefore.supported && targetsAfter.supported
+  const enumerationFailed = targetsBefore.ok === false || targetsAfter.ok === false
+  const targetsComparable = targetsBefore.supported && targetsAfter.supported && !enumerationFailed
+  const targetDiff = targetsComparable ? diffTargetNames(targetsBefore, targetsAfter) : { added: [], removed: [] }
 
-  if (isDrift(diff)) {
+  if (enumerationFailed) {
+    // Checked FIRST, before either drift check below: a failed enumeration
+    // makes both of those checks meaningless (see snapshotPlatformVaultTargets'
+    // own doc comment) -- comparing an incomplete read to anything else, or
+    // silently skipping the comparison, could hide a real leak or report
+    // spurious drift. Fail the run outright instead of guessing.
+    console.error(`\nidentity-vault-home-guard: ${formatEnumerationFailure(targetsBefore, targetsAfter)}`)
+    process.exitCode = 1
+  } else if (isDrift(diff)) {
     console.error(`\nidentity-vault-home-guard: ${formatDiff(diff, before, after)}`)
     process.exitCode = 1
-  } else if (targetsComparable && isTargetDrift(targetDiff)) {
+  } else if (isTargetDrift(targetDiff)) {
     console.error(`\nidentity-vault-home-guard: ${formatTargetDiff(targetDiff)}`)
     process.exitCode = 1
   } else if (preexistingLoopbackLeaks.length > 0) {
