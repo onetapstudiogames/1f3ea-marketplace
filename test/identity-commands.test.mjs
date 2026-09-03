@@ -622,6 +622,63 @@ test('setup.mjs: the approval token is genuinely single-use -- once consumed by 
   }
 })
 
+// --- Round-7 review, LOW finding: never spend the single-use approval -----
+// nonce on a registration the market was always going to refuse for
+// coding_identity_dormant alone. Checked with GET /api/official, before
+// confirmHumanApproval ever runs (which mints a nonce on the first pass and
+// CONSUMES one on the second) -- proven below on BOTH passes, and proven
+// specifically that the nonce is never touched by the check.
+
+test(
+  'setup.mjs refuses to spend the approval nonce when GET /api/official reports the coding-client identity ' +
+  'doors as dormant, on the first pass and the second',
+  async () => {
+    const stub = await startStubMarketServer({ codingClientDoorsDormant: true })
+    const home = makeTempHome('setup-doors-dormant-')
+    try {
+      const pass1 = await runNode(
+        setupPath,
+        ['--origin', stub.origin, '--handle', 'agent-dormant', '--client-class', 'coding_persistent'],
+        { env: home.env },
+      )
+      assert.notEqual(pass1.status, 0, 'refuses outright when the coding-client doors are dormant')
+      assert.match(pass1.stderr, /coding_identity_dormant/u)
+      assert.doesNotMatch(pass1.stderr, /--human-approved/u, 'no approval nonce is ever minted for a doomed registration')
+
+      // A pending nonce from some earlier, unrelated pass must not be
+      // spendable here either -- confirm the check runs on the SECOND pass
+      // too, before that nonce could ever be consumed.
+      mkdirSync(join(home.dir, '.1f3ea'), { recursive: true })
+      writeFileSync(join(home.dir, '.1f3ea', 'setup-state.json'), JSON.stringify({
+        pending_approval: {
+          handle: 'agent-dormant', client_class: 'coding_persistent', nonce: 'a'.repeat(32),
+          created_at: new Date().toISOString(),
+        },
+      }))
+      const pass2 = await runNode(
+        setupPath,
+        [
+          '--origin', stub.origin, '--handle', 'agent-dormant', '--client-class', 'coding_persistent',
+          '--human-approved', 'deadbeef',
+        ],
+        { env: home.env },
+      )
+      assert.notEqual(pass2.status, 0, 'refuses outright on the second pass too')
+      assert.match(pass2.stderr, /coding_identity_dormant/u)
+
+      const state = JSON.parse(readFileSync(join(home.dir, '.1f3ea', 'setup-state.json'), 'utf8'))
+      assert.ok(state.pending_approval, 'the pending approval nonce was never consumed by this refusal')
+
+      assert.equal(stub.merchants.size, 0, 'nothing was registered')
+      assertNoSecretLeaked(pass1, 'setup.mjs coding_identity_dormant refusal (pass 1)')
+      assertNoSecretLeaked(pass2, 'setup.mjs coding_identity_dormant refusal (pass 2)')
+    } finally {
+      home.cleanup()
+      await stub.close()
+    }
+  },
+)
+
 test('setup.mjs adopts an existing working vault entry instead of registering a duplicate (findings 7 & 13)', async () => {
   const stub = await startStubMarketServer()
   const home = makeTempHome('setup-adopt-')
@@ -736,6 +793,11 @@ test('key rotate invalidates recovery codes instead of carrying them forward, an
 
     const result = await runNode(keyPath, ['rotate', '--origin', stub.origin, '--handle', 'agent-four'], { env: home.env })
     assert.equal(result.status, 0, result.stderr)
+    // Round-7 review, LOW finding: the round-6 disclosure line shipped with
+    // no assertion anywhere in the suite -- pin it here so a refactor that
+    // drops the `label` argument from refuseOnHandleMismatch reopens this
+    // with a red suite, not a silently green one.
+    assert.match(result.stdout, /key rotate: one me read: OK \(handle: agent-four\)\./u)
     assert.match(result.stdout, /recovery codes were invalidated by this rotation/u)
     assert.match(result.stdout, /key recover generate/u)
     assertNoSecretLeaked(result, 'key rotate')
@@ -768,6 +830,10 @@ test('key recover generate writes the fresh codes into the live vault entry, not
 
     const result = await runNode(keyPath, ['recover', 'generate', '--origin', stub.origin, '--handle', 'agent-five'], { env: home.env })
     assert.equal(result.status, 0, result.stderr)
+    // Round-7 review, LOW finding: same disclosure-line pin as `key rotate`
+    // above -- unpinned before this, a dropped `label` argument would
+    // silently reopen the honesty gap the round-6 fix closed.
+    assert.match(result.stdout, /key recover generate: one me read: OK \(handle: agent-five\)\./u)
     assertNoSecretLeaked(result, 'key recover generate')
 
     const live = readSecret(stub.origin, 'agent-five', { homeDir: home.dir })
@@ -782,6 +848,107 @@ test('key recover generate writes the fresh codes into the live vault entry, not
     deleteSecret(stub.origin, 'agent-five-recovery', { homeDir: home.dir })
     home.cleanup()
     await stub.close()
+  }
+})
+
+// --- Round-7 review, LOW findings: (1) `key recover begin` made an --------
+// undisclosed authenticated GET /api/me read whenever a resolvable handle
+// and a still-readable (even if non-working) stored key exist -- rotate and
+// recover generate already disclosed theirs; recover begin's own call into
+// refuseOnHandleMismatch passed no `label`, so its disclosure branch never
+// fired. (2) the probe-FAILED branch ("...FAILED (...) -- proceeding...")
+// had no assertion anywhere either, for any of the three commands.
+
+test('key recover begin discloses the same one me-read validateBeforeRecoverBegin runs, when a handle and stored key are found', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-recover-begin-disclosure-')
+  try {
+    const merchantKey = `1f3ea_sk_${'3'.repeat(48)}`
+    const recoveryCode = `1f3ea_rc_${'b'.repeat(64)}`
+    stub.merchants.set('agent-recover-begin', {
+      merchant_key: merchantKey, recovery_codes: [recoveryCode], client_class: 'coding_persistent',
+    })
+    storeSecret(stub.origin, 'agent-recover-begin', {
+      kind: 'merchant', handle: 'agent-recover-begin', client_class: 'coding_persistent',
+      merchant_key: merchantKey, recovery_codes: [recoveryCode], origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(
+      keyPath,
+      ['recover', 'begin', '--origin', stub.origin, '--handle', 'agent-recover-begin', '--recovery-code-file', '-'],
+      { input: recoveryCode, env: home.env },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /key recover begin: one me read: OK \(handle: agent-recover-begin\)\./u)
+    assertNoSecretLeaked(result, 'key recover begin disclosure')
+  } finally {
+    deleteSecret(stub.origin, 'agent-recover-begin', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+test('key rotate/recover generate/recover begin disclose a FAILED me-read probe (and proceed) instead of silently skipping the check', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-me-read-probe-failed-')
+  const origin = stub.origin
+  try {
+    const merchantKey = `1f3ea_sk_${'6'.repeat(48)}`
+    const recoveryCode = `1f3ea_rc_${'c'.repeat(64)}`
+    for (const handle of ['agent-probe-fail-rotate', 'agent-probe-fail-recover-gen', 'agent-probe-fail-recover-begin']) {
+      storeSecret(origin, handle, {
+        kind: 'merchant', handle, client_class: 'coding_persistent',
+        merchant_key: merchantKey, recovery_codes: [recoveryCode], origin,
+        stored_at: new Date().toISOString(),
+      }, { homeDir: home.dir })
+    }
+    // The origin now refuses every connection -- every probeMe read below
+    // fails with a genuine network error, never a mismatch.
+    await stub.close()
+
+    const rotateResult = await runNode(
+      keyPath, ['rotate', '--origin', origin, '--handle', 'agent-probe-fail-rotate'],
+      { env: home.env, timeout: 10_000 },
+    )
+    assert.notEqual(rotateResult.status, 0, 'rotate cannot complete once the market is unreachable')
+    assert.match(
+      rotateResult.stdout,
+      /key rotate: one me read: FAILED \(.+\) -- proceeding, since there is nothing this check can validate\./u,
+    )
+
+    const recoverGenResult = await runNode(
+      keyPath, ['recover', 'generate', '--origin', origin, '--handle', 'agent-probe-fail-recover-gen'],
+      { env: home.env, timeout: 10_000 },
+    )
+    assert.notEqual(recoverGenResult.status, 0)
+    assert.match(
+      recoverGenResult.stdout,
+      /key recover generate: one me read: FAILED \(.+\) -- proceeding, since there is nothing this check can validate\./u,
+    )
+
+    const recoverBeginResult = await runNode(
+      keyPath,
+      [
+        'recover', 'begin', '--origin', origin, '--handle', 'agent-probe-fail-recover-begin',
+        '--recovery-code-file', '-',
+      ],
+      { input: recoveryCode, env: home.env, timeout: 10_000 },
+    )
+    assert.notEqual(recoverBeginResult.status, 0)
+    assert.match(
+      recoverBeginResult.stdout,
+      /key recover begin: one me read: FAILED \(.+\) -- proceeding, since there is nothing this check can validate\./u,
+    )
+
+    for (const result of [rotateResult, recoverGenResult, recoverBeginResult]) {
+      assertNoSecretLeaked(result, 'key me-read probe-failed disclosure')
+    }
+  } finally {
+    for (const handle of ['agent-probe-fail-rotate', 'agent-probe-fail-recover-gen', 'agent-probe-fail-recover-begin']) {
+      deleteSecret(origin, handle, { homeDir: home.dir })
+    }
+    home.cleanup()
   }
 })
 
@@ -1282,16 +1449,84 @@ test('setup.mjs refuses to register under a new handle when this origin already 
   }
 })
 
+// --- Round-7 review, LOW finding: setup.mjs's refusal on an INCOMPLETE ----
+// vault enumeration (listVaultLabels' own `incomplete` flag, set only after
+// a genuine darwin ENOBUFS/ETIMEDOUT) had no end-to-end test -- only
+// listVaultLabels' own unit tests in identity-client.test.mjs pinned the
+// flag itself. Driving setup.mjs itself through that branch, as a real
+// subprocess, needs a way to force `incomplete: true` regardless of the
+// actual host platform (CI never runs this suite on macOS at all -- see
+// .github/workflows/ci.yml -- and win32/linux's own listVaultLabels code
+// never sets this flag in the first place). test/helpers/
+// force-incomplete-vault-loader.mjs is a Node module-customization hook,
+// opted into per-subprocess via NODE_OPTIONS=--import, that redirects
+// ONLY setup.mjs's own import of identity-client.mjs to a shim reporting a
+// forced incomplete enumeration -- see that file's own doc comment.
+
+const incompleteVaultLoaderUrl = new URL('helpers/force-incomplete-vault-loader.mjs', import.meta.url).href
+
+test('setup.mjs refuses to register when this host\'s vault enumeration is incomplete, before ever asking for approval', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('setup-incomplete-enumeration-')
+  try {
+    const result = await runNode(
+      setupPath,
+      ['--origin', stub.origin, '--handle', 'agent-fresh', '--client-class', 'coding_persistent'],
+      { env: { ...home.env, NODE_OPTIONS: `--import ${incompleteVaultLoaderUrl}` } },
+    )
+    assert.notEqual(result.status, 0, 'an incomplete vault enumeration must refuse, never fail open')
+    assert.match(result.stderr, /vault enumeration did not finish/u)
+    assert.match(result.stderr, /--new-identity/u, 'names the explicit override for a genuinely new merchant')
+    assert.doesNotMatch(result.stderr, /--human-approved/u, 'refuses before ever minting or asking for an approval token')
+    assert.equal(stub.merchants.size, 0, 'nothing was registered')
+    assertNoSecretLeaked(result, 'setup.mjs incomplete-enumeration refusal')
+  } finally {
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+test('setup.mjs: --new-identity bypasses the incomplete-vault-enumeration refusal', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('setup-incomplete-enumeration-override-')
+  try {
+    const result = await runNode(
+      setupPath,
+      ['--origin', stub.origin, '--handle', 'agent-fresh', '--client-class', 'coding_persistent', '--new-identity'],
+      { env: { ...home.env, NODE_OPTIONS: `--import ${incompleteVaultLoaderUrl}` } },
+    )
+    // --new-identity skips the whole listVaultLabels guard block outright
+    // (setup.mjs only calls it inside `if (!newIdentity)`), so this run
+    // reaches the ordinary human-approval nonce step instead of the
+    // incomplete-enumeration refusal.
+    assert.doesNotMatch(result.stderr, /vault enumeration did not finish/u)
+    assert.match(result.stderr, /--human-approved/u, 'reaches the ordinary approval-nonce step instead')
+  } finally {
+    home.cleanup()
+    await stub.close()
+  }
+})
+
 // A leftover REGISTRATION staging label (a run that died between staging
-// and promotion) is not a real second identity -- listVaultLabels must
+// and promotion) is not treated as a second REGISTERED identity -- the OLD
+// "different label" duplicate-identity guard (otherLabels, just above) must
 // exclude it by the `kind: 'staging'` marker its bundle carries (see
 // storeSecret/isStagingLabel in identity-client.mjs), covering the per-run
 // suffixed registration form the same way it already covers rotation/
-// recovery, or the guard above wrongly refuses a legitimate fresh
+// recovery, or that guard would wrongly refuse a legitimate fresh
 // registration because of a label this script itself created and never
-// meant as anything but scratch space.
+// meant as anything but scratch space. But a leftover registration staging
+// label is ALSO exactly the shape a FAILED vault promotion leaves behind --
+// a confirmed, permanent merchant already created server-side, with its
+// only key copy stuck under this one label -- and nothing in the vault
+// alone can tell that apart from a merely abandoned pre-confirm stage. So a
+// SEPARATE, more specific guard (right below, before the OLD one runs)
+// refuses outright whenever any such label exists, rather than silently
+// treating it as harmless scratch space: see the end-to-end reproduction
+// test further below for the concrete duplicate-merchant failure this
+// closes.
 
-test('setup.mjs does not treat a leftover registration staging label as a second identity', async () => {
+test('setup.mjs never trips the OLD "different label" guard off a staging label alone, but refuses via the NEW registration-staging-label guard instead', async () => {
   const stub = await startStubMarketServer()
   const home = makeTempHome('setup-stale-registration-staging-')
   try {
@@ -1321,8 +1556,13 @@ test('setup.mjs does not treat a leftover registration staging label as a second
     assert.doesNotMatch(
       result.stderr,
       /already holds .* entr(?:y|ies) for this origin under a different/u,
-      'a staging-only label must never trip the duplicate-identity guard',
+      'the OLD other-label guard must never fire off a staging label alone',
     )
+    assert.notEqual(result.status, 0, 'the NEW registration-staging-label guard refuses outright')
+    assert.match(result.stderr, /registration staging label/u)
+    assert.match(result.stderr, /agent-abandoned--pending-registration-deadbeef/u, 'names the exact stranded label')
+    assert.match(result.stderr, /key status --handle agent-abandoned/u, 'points at the base handle to check')
+    assert.equal(stub.merchants.size, 0, 'nothing was registered')
     assertNoSecretLeaked(result, 'setup.mjs leftover registration staging label')
   } finally {
     deleteSecret(stub.origin, 'agent-abandoned--pending-registration-deadbeef', { homeDir: home.dir })
@@ -1330,6 +1570,105 @@ test('setup.mjs does not treat a leftover registration staging label as a second
     await stub.close()
   }
 })
+
+// End-to-end reproduction of the actual failure this guard exists to close
+// (round-7 review, MEDIUM finding): a register() whose server-side confirm
+// succeeds but whose LOCAL vault promotion fails (the per-handle promote
+// lock held by something else on this host) leaves the confirmed merchant
+// key ONLY under its own `--pending-registration-<hex>` staging label,
+// with setup-state.json recording no handle at all. Without the guard
+// above, a LATER, unattended session that never saw the first run's error
+// and picks a different handle would sail straight past the OLD
+// "different label" check (which correctly ignores staging labels) and
+// register a second, permanent, unrecoverable merchant right next to the
+// stranded one.
+test(
+  'setup.mjs refuses a later run under a different handle when an earlier run\'s vault promotion failed and ' +
+  'stranded the confirmed key under a registration staging label, instead of registering a second merchant',
+  { timeout: 15_000 },
+  async () => {
+    const stub = await startStubMarketServer()
+    const home = makeTempHome('setup-stranded-registration-')
+    const origin = stub.origin
+    const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
+    const lockPath = join(home.dir, '.1f3ea', `promote-lock__${safeOrigin}__alice-agent.lock`)
+    try {
+      // --- Pass 1: mint the human-approval nonce for "alice-agent". ---
+      const pass1 = await runNode(
+        setupPath,
+        ['--origin', origin, '--handle', 'alice-agent', '--client-class', 'coding_persistent'],
+        { env: home.env },
+      )
+      assert.notEqual(pass1.status, 0, 'the first pass never approves itself')
+      const token = extractApprovalToken(pass1.stderr)
+      assert.ok(token, 'pass 1 must print a token for pass 2 to use')
+
+      // --- Hold the per-handle promote lock for "alice-agent" BEFORE pass
+      // 2 runs -- the exact fresh (not stale) lockfile identity-client.mjs's
+      // own promoteLockPath computes, simulating a concurrent run (or a
+      // stuck process) already inside promoteReplacementKey's critical
+      // section for this exact handle, same technique as the "key recover
+      // generate refuses when the per-handle vault lock is already held"
+      // test above.
+      mkdirSync(join(home.dir, '.1f3ea'), { recursive: true })
+      writeFileSync(lockPath, '')
+
+      // --- Pass 2: register() actually stages AND confirms with the
+      // market -- a real, permanent merchant is created server-side -- but
+      // promoteReplacementKey cannot acquire the held lock within its own
+      // wait budget, so the confirmed key is left ONLY under its own
+      // staging label and setup-state.json records no handle at all.
+      const pass2 = await runNode(
+        setupPath,
+        [
+          '--origin', origin, '--handle', 'alice-agent', '--client-class', 'coding_persistent',
+          '--human-approved', token,
+        ],
+        { env: home.env },
+      )
+      assert.notEqual(pass2.status, 0, 'pass 2 must fail while the promote lock is held')
+      assert.equal(stub.merchants.has('alice-agent'), true, 'the market really did confirm this registration server-side')
+      assert.equal(stub.merchants.size, 1, 'exactly one merchant exists after pass 2')
+
+      const strandedLabels = listRawVaultLabels(origin, home.dir)
+        .filter(label => label.startsWith('alice-agent--pending-registration-'))
+      assert.equal(strandedLabels.length, 1, 'exactly one stranded registration staging label was left behind')
+
+      // Release the simulated lock -- a real held lock from another process
+      // would not still be held by the time an entirely separate, later
+      // session starts.
+      rmSync(lockPath, { force: true })
+
+      // --- A later, unattended session picks a DIFFERENT handle and never
+      // saw the first run's error (no state file names any handle for this
+      // origin). It must be refused -- naming the stranded label -- rather
+      // than silently registering a second, permanent, unrecoverable
+      // merchant next to the one already stranded above. The refusal fires
+      // before the human-approval nonce round trip even starts, so no
+      // second approval question is needed to observe it.
+      const laterRun = await runNode(
+        setupPath,
+        ['--origin', origin, '--handle', 'bob-agent', '--client-class', 'coding_persistent'],
+        { env: home.env },
+      )
+      assert.notEqual(laterRun.status, 0, 'a later run under a different handle must be refused')
+      assert.match(laterRun.stderr, /registration staging label/u)
+      assert.match(laterRun.stderr, new RegExp(strandedLabels[0].replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
+      assert.match(laterRun.stderr, /key status --handle alice-agent/u)
+      assertNoSecretLeaked(laterRun, 'setup.mjs stranded-registration duplicate-merchant refusal')
+
+      assert.equal(stub.merchants.size, 1, 'still exactly one server merchant -- no second one was ever created')
+      assert.equal(stub.merchants.has('bob-agent'), false, 'the second handle was never registered')
+    } finally {
+      rmSync(lockPath, { force: true })
+      for (const label of listRawVaultLabels(origin, home.dir)) {
+        deleteSecret(origin, label, { homeDir: home.dir })
+      }
+      home.cleanup()
+      await stub.close()
+    }
+  },
+)
 
 // --- Finding 9: the test env overlay never leaks the real developer's own -
 // AGENT_1F3EA_SECRET / IDENTITY_ORIGIN into a driven child process.

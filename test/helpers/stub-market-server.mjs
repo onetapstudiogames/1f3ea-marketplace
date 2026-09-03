@@ -267,9 +267,18 @@ const REGISTER_CONFIRM_BARRIER_TIMEOUT_MS = 10_000
  * real, honestly-requested handle. Every other caller omits this option, so
  * it changes nothing about the ~20 other scenarios sharing this stub.
  */
+/**
+ * codingClientDoorsDormant (round-7 review, LOW finding): when true, GET
+ * /api/official reports `identity.coding_client_doors` as `null` -- the
+ * real market's own shape while MARKET_CODING_IDENTITY_ENABLED is off (see
+ * ref-market src/door.ts / src/market-identity-routes.ts) -- so a test can
+ * drive setup.mjs's pre-registration doors check without a real dormant
+ * market. Defaults to false (doors open), which is what every other
+ * scenario sharing this stub needs and already assumes.
+ */
 export async function startStubMarketServer({
   registerConfirmBarrier, pairingUnavailable = false, rotateConfirmHandleOverride, recoveryConfirmHandleOverride,
-  registerStageHandleOverride,
+  registerStageHandleOverride, codingClientDoorsDormant = false,
 } = {}) {
   const merchants = new Map()
   // Every pending map is keyed by `session` (an opaque value, unrelated to
@@ -293,6 +302,28 @@ export async function startStubMarketServer({
         const found = findByKey(merchants, key)
         if (!found) return send(res, 401, { error: 'bad or missing bearer secret' })
         return send(res, 200, { handle: found[0] })
+      }
+
+      if (req.method === 'GET' && req.url === '/api/official') {
+        // Only the one field setup.mjs's pre-registration doors check
+        // (identity-client.mjs's probeOfficialDoors) actually reads --
+        // identity.coding_client_doors null vs. non-null -- mirroring the
+        // real market's own /api/official shape (src/trust-routes.ts /
+        // src/market-identity-routes.ts) just enough for that check, not a
+        // full copy of every other field the real endpoint returns.
+        return send(res, 200, {
+          identity: {
+            coding_client_doors: codingClientDoorsDormant ? null : {
+              register: '/api/register',
+              rotate: '/api/rotate',
+              recovery: '/api/recovery',
+              pair: '/api/pair',
+              client_classes: ['coding_persistent', 'coding_ephemeral'],
+              registration_requires_human_approved: true,
+              key_and_codes_shown_exactly_once: true,
+            },
+          },
+        })
       }
 
       if (req.method !== 'POST') return send(res, 404, { error: 'not found' })
