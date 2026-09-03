@@ -471,15 +471,11 @@ if (!newIdentity) {
       `registration staging label ("${label}"${andMore}) for this origin. A registration whose vault ` +
       'promotion failed can leave the confirmed merchant key stored ONLY under a label like that one, while ' +
       'the merchant it names is already permanent and unrecoverable server-side -- a later run choosing a ' +
-      `different handle must never silently register a second one next to it. Run \`key status --handle ` +
-      `${label}\` -- since "${base}" is exactly what is stranded, that command against the base handle ` +
-      'itself can never succeed and proves nothing. Run it against the staging label instead: if it ' +
-      `prints "stored key: works, but authenticates as \\"${base}\\", not \\"${label}\\"", that mismatch ` +
-      `IS the confirmation -- "${base}" is already a live merchant server-side and this staging label ` +
-      'holds its key. Then read the key back from that label (`key show --reveal` after temporarily ' +
-      'pointing --handle at that exact staging label, or read the vault entry directly) and store it ' +
-      'under a real label yourself. Only pass --new-identity once you have confirmed this staging label ' +
-      'is not a stranded confirmed registration.',
+      `different handle must never silently register a second one next to it. Run \`key adopt --handle ` +
+      `${base} --from-label ${label}\` to probe the confirmed key and, only if it actually authenticates as ` +
+      `"${base}", store it under that real handle and delete the staging copy -- or, to inspect the key by ` +
+      `hand first, \`key show --handle ${label} --reveal\`. Only pass --new-identity once that staging entry ` +
+      'is resolved and a genuinely new merchant, distinct from it, is still intended.',
     )
     process.exitCode = 1
     process.exit()
