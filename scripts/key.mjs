@@ -378,10 +378,12 @@ async function recoverBegin() {
 }
 
 /**
- * Recovers a merchant key stranded under a registration staging label --
- * setup.mjs's stranded-registration refusal points here. `key status
- * --handle <baseHandle>` can never answer that refusal's question, because
- * the confirmed key it needs lives ONLY under the staging label at that
+ * Recovers a merchant key stranded under a staging label -- setup.mjs's
+ * stranded-registration refusal points here, and so do promoteReplacementKey's
+ * own storeSecret-failure and lock-timeout messages, reached from rotate()
+ * and recoverBegin() as well as register(). `key status --handle
+ * <baseHandle>` can never answer any of those refusals' question, because
+ * the confirmed key they need lives ONLY under the staging label at that
  * point, not under the base handle -- see this function's own refusal path
  * for the same reasoning `requireStoredKey` above states for status/rotate/
  * recover. This never guesses: it reads the staged bundle by its exact
@@ -389,19 +391,28 @@ async function recoverBegin() {
  * the same as every other authenticated probe in this file), and refuses
  * outright unless that probe's own handle equals --handle exactly -- proof
  * the key actually belongs to the merchant being adopted, not merely a
- * label that happens to say so. Only then does it store the bundle under
- * the real handle (staged-then-promote, via promoteReplacementKey -- the
- * same critical section register()/rotate()/recoverBegin() themselves use)
- * and delete the staging copy. Never prints the key itself.
+ * label that happens to say so.
  *
- * Two refusals exist purely to keep adopt honest about its own errors,
- * neither reachable by any other caller of promoteReplacementKey: an
- * upfront refusal when --from-label equals --handle (nothing to move), and
- * a reworded catch of promoteReplacementKey's LiveVaultEntryExistsError
- * when --from-label names a genuinely different, already-live entry --
- * that function's default wording for the case describes register()'s
- * meaning of it (a concurrent registration won a race), which does not
- * apply here since adopt never registers anything.
+ * Round-2's HIGH finding: rotate()/recoverBegin() intentionally overwrite
+ * the LIVE entry for an already-owned handle (they never pass
+ * refuseIfPresent), so when either one strands, the live entry still holds
+ * the now-dead OLD key while the staging label holds the only copy of the
+ * confirmed NEW one -- and adopt used to refuse unconditionally whenever a
+ * live entry existed, at exactly the moment a stranded rotation or recovery
+ * needed it to overwrite one. That left the two strand messages naming a
+ * remedy that could never work in the state they name it from. So: once the
+ * staged key has proven itself above, this also reads and probes whatever
+ * currently lives at --handle. If nothing is there, or what is there does
+ * NOT authenticate as --handle (the shape a stranded rotation/recovery
+ * leaves), promoting over it is safe -- exactly the trust rotate()/
+ * recoverBegin() themselves place in a freshly server-confirmed key -- and
+ * the merge also stamps recovery_codes_invalidated_at, since a live entry
+ * that no longer authenticates got that way through a rotation or recovery
+ * the market already confirmed, which invalidates every recovery code
+ * atomically. If the existing entry DOES still authenticate as --handle,
+ * both it and the staged copy are working keys for the same merchant --
+ * adopt refuses to pick one, and points at reading BOTH before either is
+ * touched, never at deleting the one that just proved itself.
  */
 async function adopt() {
   const handle = typeof flags.handle === 'string' ? flags.handle : null
@@ -466,24 +477,80 @@ async function adopt() {
     process.exitCode = 1
     return
   }
+
+  // The staged key just proved (one line up) that it belongs to --handle.
+  // Before deciding whether it is safe to promote, find out what currently
+  // lives at --handle itself, and whether IT still works -- see this
+  // function's own doc comment for why (round-2 HIGH finding).
+  let existingLive
+  try {
+    existingLive = readSecret(origin, handle)
+  } catch (error) {
+    if (!(error instanceof SecretReadFailure)) throw error
+    console.error(
+      `key adopt: could not read the existing vault entry for "${handle}" (${error.message}); refusing to ` +
+      `guess whether it is safe to overwrite. The staging copy at "${stagingLabel}" -- already proven to ` +
+      'authenticate as this handle -- is untouched. Resolve the unreadable entry by hand, then run this ' +
+      'exact adopt command again.',
+    )
+    process.exitCode = 1
+    return
+  }
+
+  let liveIsDead = false
+  if (existingLive.found && typeof existingLive.value?.merchant_key === 'string') {
+    const liveProbe = await probeMe(origin, existingLive.value.merchant_key, { allowOrigin })
+    console.log(`key adopt: probed the existing entry at "${handle}" with one authenticated GET /api/me read.`)
+    if (liveProbe.ok && liveProbe.handle === handle) {
+      // The live entry is ALSO a working key for this exact merchant --
+      // nothing is stranded here, both copies are real. Never propose
+      // deleting the staging copy -- the one that just authenticated --
+      // without first reading the live one too.
+      console.error(
+        `key adopt: refusing -- the vault already holds a live entry for "${handle}" that ALSO currently ` +
+        'authenticates as that same handle (just verified with one GET /api/me read), so both the staged ' +
+        `copy at "${stagingLabel}" (which authenticated above) and the live entry are working keys. Adopt ` +
+        'will not silently pick one to keep. Read both before deleting either: ' +
+        `\`key show --handle ${handle} --reveal\` for the live entry, and \`key show --handle ${stagingLabel} ` +
+        '--reveal` for the staged copy.',
+      )
+      process.exitCode = 1
+      return
+    }
+    // The live entry did not authenticate as --handle at all (bad key,
+    // network error, or a mismatched handle) -- the shape a stranded
+    // rotation or recovery leaves behind once the market has already
+    // confirmed the new key server-side. Safe to promote the staged key
+    // over it.
+    liveIsDead = true
+  }
+
   let location
   try {
-    location = promoteReplacementKey(origin, handle, stagingLabel, merchantKey, () => ({
-      ...(typeof stored.value.client_class === 'string' ? { client_class: stored.value.client_class } : {}),
-      ...(Array.isArray(stored.value.recovery_codes) ? { recovery_codes: stored.value.recovery_codes } : {}),
-    }), {}, { refuseIfPresent: true })
+    location = promoteReplacementKey(origin, handle, stagingLabel, merchantKey, previous => ({
+      ...(typeof stored.value.client_class === 'string'
+        ? { client_class: stored.value.client_class }
+        : previous?.client_class ? { client_class: previous.client_class } : {}),
+      ...(liveIsDead
+        ? { recovery_codes_invalidated_at: new Date().toISOString() }
+        : (Array.isArray(stored.value.recovery_codes) ? { recovery_codes: stored.value.recovery_codes } : {})),
+    }), {}, {
+      keyNoun: liveIsDead
+        ? 'the already-authenticated replacement key this adopt is moving'
+        : 'the already-authenticated key this adopt is moving',
+      oldKeyNoun: liveIsDead ? 'the dead live key' : null,
+    })
   } catch (error) {
     if (error instanceof LiveVaultEntryExistsError) {
-      // promoteReplacementKey's default wording for this case describes
-      // register()'s meaning of it -- a concurrent registration won a race
-      // for the handle -- which does not apply here: adopt never registers
-      // anything, it only promotes an already-known-good staged key, so
-      // there is no race to describe. Reword it for what actually happened:
-      // the destination handle already has a live entry.
+      // Not reachable today -- this call never passes refuseIfPresent,
+      // since the checks above already decided whether overwriting is
+      // safe. Kept as a safety net worded for adopt's own meaning, in case
+      // that ever changes, rather than register()'s concurrent-race
+      // wording.
       console.error(
-        `key adopt: the vault already holds a live entry for "${handle}"; adopt refuses to overwrite it -- ` +
-        `compare the two with \`key status --handle ${handle}\`, and if the staging copy at "${stagingLabel}" ` +
-        'turns out to be a redundant leftover, delete it by hand.',
+        `key adopt: refusing -- a live entry for "${handle}" that authenticates as this handle appeared ` +
+        `between this adopt's own checks and its write. The staging copy at "${stagingLabel}" is untouched. ` +
+        `Read the live entry before deleting anything: \`key show --handle ${handle} --reveal\`.`,
       )
     } else {
       console.error(`key adopt: ${error.message}`)
@@ -493,7 +560,12 @@ async function adopt() {
   }
   console.log(`handle: ${handle}`)
   console.log(`stored: ${location}`)
-  console.log(`key adopt: moved the confirmed key from "${stagingLabel}" to "${handle}" and deleted the staging copy.`)
+  console.log(
+    liveIsDead
+      ? `key adopt: moved the confirmed key from "${stagingLabel}" to "${handle}", replacing the dead live ` +
+        'entry found there, and deleted the staging copy.'
+      : `key adopt: moved the confirmed key from "${stagingLabel}" to "${handle}" and deleted the staging copy.`,
+  )
 }
 
 function show() {

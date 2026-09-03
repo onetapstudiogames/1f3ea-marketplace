@@ -1031,7 +1031,28 @@ function promoteLockPath(origin, handle, homeDir) {
  * an unlocked re-check would. Same "staging copy kept, caller-worded
  * message" shape as the SecretReadFailure case above.
  */
-function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeFields, deps = {}, { refuseIfPresent = false } = {}) {
+function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeFields, deps = {}, {
+  refuseIfPresent = false,
+  // Caller-supplied noun phrase for the key this call is promoting, used in
+  // every failure message below instead of a hardcoded "replacement" --
+  // round-2's item-2 finding was a first-time registration told an agent
+  // "the old key ... no longer works" when there was no old key and
+  // nothing was replaced. Every caller names its own truth:
+  //   register():                  'the confirmed merchant key from this registration'
+  //   rotate():                     'the confirmed replacement key from this rotation'
+  //   recoverBegin():               'the confirmed replacement key from this recovery'
+  //   adopt() into an empty slot:   'the already-authenticated key this adopt is moving'
+  //   adopt() over a dead live entry: 'the already-authenticated replacement key this adopt is moving'
+  keyNoun = 'the already-confirmed key',
+  // Non-null only for callers where the entry at `handle` held a key the
+  // market has already invalidated server-side by the time this runs
+  // (rotate(), recoverBegin(), and adopt() when it proved the live entry
+  // dead) -- used only in the storeSecret-failure message below, which
+  // must not claim an "old key... no longer works" for register() or for
+  // adopt() promoting into a handle with no prior entry.
+  oldKeyNoun = null,
+} = {}) {
+  const capitalizedKeyNoun = keyNoun.charAt(0).toUpperCase() + keyNoun.slice(1)
   const lockPath = promoteLockPath(origin, handle, deps.homeDir)
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
   const result = withFileLock(lockPath, () => {
@@ -1041,10 +1062,10 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
     } catch (error) {
       throw new Error(
         `refusing to overwrite the existing vault entry for "${handle}": ${error.message}. ` +
-        'The already-confirmed replacement key was NOT lost -- it is still stored under the ' +
+        `${capitalizedKeyNoun} was NOT lost -- it is still stored under the ` +
         `staging label "${stagingLabel}". Resolve the unreadable entry, then run ` +
         `\`key adopt --handle ${handle} --from-label ${stagingLabel}\` to move it -- or, if that is not ` +
-        `available, read the replacement key back from "${stagingLabel}" yourself and store it under ` +
+        `available, read it back from "${stagingLabel}" yourself and store it under ` +
         `"${handle}" by hand.`,
       )
     }
@@ -1105,8 +1126,10 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
       }, deps)
     } catch (error) {
       throw new Error(
-        `the rotation/recovery already CONFIRMED, so the old key for "${handle}" no longer works: ${error.message}. ` +
-        `The replacement key is stored under "${stagingLabel}" and nowhere else -- run ` +
+        (oldKeyNoun
+          ? `the rotation/recovery already CONFIRMED, so ${oldKeyNoun} for "${handle}" no longer works: ${error.message}. `
+          : `storing ${keyNoun} under "${handle}" failed: ${error.message}. `) +
+        `${capitalizedKeyNoun} is stored under "${stagingLabel}" and nowhere else -- run ` +
         `\`key adopt --handle ${handle} --from-label ${stagingLabel}\` to move it, or, if that is not ` +
         `available, read it back from "${stagingLabel}" yourself and store it under "${handle}" before doing ` +
         'anything else.',
@@ -1127,7 +1150,7 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
     throw new Error(
       `could not acquire the per-handle vault lock for "${handle}" on this host within ` +
       `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: another registration, rotation, or recovery for the same handle ` +
-      'appears to still be running concurrently on this host. The already-confirmed replacement key was NOT ' +
+      `appears to still be running concurrently on this host. ${capitalizedKeyNoun} was NOT ` +
       `lost -- it is still stored under the staging label "${stagingLabel}" and nowhere else. Retry once the ` +
       `other run finishes -- either the original command, or \`key adopt --handle ${handle} --from-label ` +
       `${stagingLabel}\` -- or, if that is not available, read the key back from "${stagingLabel}" and store ` +
@@ -1677,7 +1700,10 @@ async function register(flags) {
   const location = promoteReplacementKey(origin, finalHandle, stagingLabel, staged.merchant_key, () => ({
     client_class: clientClass,
     recovery_codes: staged.recovery_codes,
-  }), {}, { refuseIfPresent: !replaceVaultEntry })
+  }), {}, {
+    refuseIfPresent: !replaceVaultEntry,
+    keyNoun: 'the confirmed merchant key from this registration',
+  })
 
   revealOrHide(flags, 'Merchant key', [staged.merchant_key])
   revealOrHide(flags, 'Recovery codes (all eight)', staged.recovery_codes)
@@ -1784,7 +1810,10 @@ async function rotate(flags) {
   const location = promoteReplacementKey(origin, staged.handle, stagingLabel, staged.merchant_key, () => ({
     client_class: clientClass,
     recovery_codes_invalidated_at: new Date().toISOString(),
-  }))
+  }), {}, {
+    keyNoun: 'the confirmed replacement key from this rotation',
+    oldKeyNoun: 'the old key',
+  })
 
   // Print the already-validated staged.handle -- the label this rotation
   // actually just wrote to, two lines up -- never the confirm response's own
@@ -2020,7 +2049,10 @@ async function recoverBegin(flags) {
   const location = promoteReplacementKey(origin, staged.handle, stagingLabel, staged.merchant_key, previous => ({
     ...(previous?.client_class ? { client_class: previous.client_class } : {}),
     recovery_codes_invalidated_at: new Date().toISOString(),
-  }))
+  }), {}, {
+    keyNoun: 'the confirmed replacement key from this recovery',
+    oldKeyNoun: 'the old key',
+  })
 
   // Print the already-validated staged.handle -- the label this recovery
   // actually just wrote to, two lines up -- never the confirm response's own
