@@ -22,7 +22,9 @@ import { resolve } from 'node:path'
 import { pluginRoot } from './lib/paths.mjs'
 import { readSetupState, SetupStateReadFailure } from './lib/identity-state.mjs'
 import { probeMe } from './lib/identity-probe.mjs'
-import { readSecret, SecretReadFailure, HANDLE_RE, promoteReplacementKey } from './identity-client.mjs'
+import {
+  readSecret, SecretReadFailure, HANDLE_RE, promoteReplacementKey, LiveVaultEntryExistsError,
+} from './identity-client.mjs'
 import { assertAllowedOrigin } from './lib/origin-guard.mjs'
 
 function parseArgs(argv) {
@@ -391,6 +393,15 @@ async function recoverBegin() {
  * the real handle (staged-then-promote, via promoteReplacementKey -- the
  * same critical section register()/rotate()/recoverBegin() themselves use)
  * and delete the staging copy. Never prints the key itself.
+ *
+ * Two refusals exist purely to keep adopt honest about its own errors,
+ * neither reachable by any other caller of promoteReplacementKey: an
+ * upfront refusal when --from-label equals --handle (nothing to move), and
+ * a reworded catch of promoteReplacementKey's LiveVaultEntryExistsError
+ * when --from-label names a genuinely different, already-live entry --
+ * that function's default wording for the case describes register()'s
+ * meaning of it (a concurrent registration won a race), which does not
+ * apply here since adopt never registers anything.
  */
 async function adopt() {
   const handle = typeof flags.handle === 'string' ? flags.handle : null
@@ -410,6 +421,16 @@ async function adopt() {
       'key adopt: --from-label <staging-label> is required -- the vault label the stranded, already-' +
       'confirmed key is currently stored under (setup\'s registration-staging refusal, or `key status`, ' +
       'names the exact label).',
+    )
+    process.exitCode = 1
+    return
+  }
+  if (stagingLabel === handle) {
+    console.error(
+      `key adopt: --from-label and --handle are both "${handle}"; there is no staging copy to move -- a key ` +
+      'already stored under its real handle is not something adopt does anything with. Run `key status ' +
+      `--handle ${handle}\` to check whether it works, or, if you believe this label is a redundant leftover ` +
+      'copy rather than the merchant\'s real entry, delete it by hand instead of running adopt.',
     )
     process.exitCode = 1
     return
@@ -452,7 +473,21 @@ async function adopt() {
       ...(Array.isArray(stored.value.recovery_codes) ? { recovery_codes: stored.value.recovery_codes } : {}),
     }), {}, { refuseIfPresent: true })
   } catch (error) {
-    console.error(`key adopt: ${error.message}`)
+    if (error instanceof LiveVaultEntryExistsError) {
+      // promoteReplacementKey's default wording for this case describes
+      // register()'s meaning of it -- a concurrent registration won a race
+      // for the handle -- which does not apply here: adopt never registers
+      // anything, it only promotes an already-known-good staged key, so
+      // there is no race to describe. Reword it for what actually happened:
+      // the destination handle already has a live entry.
+      console.error(
+        `key adopt: the vault already holds a live entry for "${handle}"; adopt refuses to overwrite it -- ` +
+        `compare the two with \`key status --handle ${handle}\`, and if the staging copy at "${stagingLabel}" ` +
+        'turns out to be a redundant leftover, delete it by hand.',
+      )
+    } else {
+      console.error(`key adopt: ${error.message}`)
+    }
     process.exitCode = 1
     return
   }

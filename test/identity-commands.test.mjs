@@ -1823,6 +1823,117 @@ test('key adopt: --handle and --from-label are both required', async () => {
   }
 })
 
+// --- Finding 4 (2026-09-03 review): `key adopt` used to surface
+// promoteReplacementKey's register()-specific race wording verbatim when
+// --from-label named an already-live entry, and never refused up front when
+// --from-label equalled --handle. Both reproduced directly below, against
+// the actual CLI subprocess, before asserting the fixed wording.
+
+test('key adopt: refuses up front, with its own wording, when --from-label equals --handle', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-same-label-')
+  const merchantKey = `1f3ea_sk_${'3'.repeat(48)}`
+  try {
+    // A live entry for "walk-agent" and NO staging copy at all -- adopting
+    // from itself has nothing to move, so this must refuse before ever
+    // reading the vault, probing the market, or calling promoteReplacementKey.
+    stub.merchants.set('walk-agent', { merchant_key: merchantKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(stub.origin, 'walk-agent', {
+      kind: 'merchant',
+      handle: 'walk-agent',
+      client_class: 'coding_persistent',
+      merchant_key: merchantKey,
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(
+      keyPath,
+      ['adopt', '--origin', stub.origin, '--handle', 'walk-agent', '--from-label', 'walk-agent'],
+      { env: home.env },
+    )
+    assert.notEqual(result.status, 0, 'refuses rather than attempting a no-op promote')
+    assert.match(result.stderr, /--from-label and --handle are both "walk-agent"/u)
+    assert.match(result.stderr, /there is no staging copy to move/u)
+    // Never the register()-specific race wording -- there was no race, and
+    // this refusal must never claim one happened.
+    assert.doesNotMatch(result.stderr, /concurrent run on this host must have won the race/u)
+    assertNoSecretLeaked(result, 'key adopt same-label refusal')
+
+    const live = readSecret(stub.origin, 'walk-agent', { homeDir: home.dir })
+    assert.ok(live.found, 'the untouched live entry is still exactly where it was')
+    assert.equal(live.value.merchant_key, merchantKey)
+  } finally {
+    deleteSecret(stub.origin, 'walk-agent', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+test('key adopt: refuses in its own words, not register()\'s race wording, when --from-label names a genuinely different live entry', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-live-collision-')
+  const merchantKey = `1f3ea_sk_${'4'.repeat(48)}`
+  const stagingLabel = 'eve-agent--pending-registration-abc12345'
+  try {
+    // "eve-agent" already has a live entry (registered normally, nothing
+    // stranded about it). A SEPARATE vault entry under a staging-shaped
+    // label happens to hold a key that also authenticates as "eve-agent"
+    // (e.g. a leftover staging copy from a run whose promotion already
+    // succeeded once before). `key adopt --handle eve-agent --from-label
+    // <stagingLabel>` passes every one of adopt's own checks (the staged key
+    // is readable, and it genuinely does probe as "eve-agent") right up to
+    // promoteReplacementKey's refuseIfPresent re-check, which is where this
+    // must refuse -- and it must refuse in adopt's own words, not the
+    // register()-specific "a concurrent run must have won the race" wording,
+    // since no registration ran here at all.
+    stub.merchants.set('eve-agent', { merchant_key: merchantKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(stub.origin, 'eve-agent', {
+      kind: 'merchant',
+      handle: 'eve-agent',
+      client_class: 'coding_persistent',
+      merchant_key: merchantKey,
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+    storeSecret(stub.origin, stagingLabel, {
+      kind: 'staging',
+      handle: 'eve-agent',
+      client_class: 'coding_persistent',
+      merchant_key: merchantKey,
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(
+      keyPath,
+      ['adopt', '--origin', stub.origin, '--handle', 'eve-agent', '--from-label', stagingLabel],
+      { env: home.env },
+    )
+    assert.notEqual(result.status, 0, 'refuses to overwrite the live entry')
+    assert.match(result.stderr, /the vault already holds a live entry for "eve-agent"/u)
+    assert.match(result.stderr, new RegExp(`key status --handle eve-agent`, 'u'))
+    assert.match(result.stderr, /delete it by hand/u)
+    // The old register()-worded message this used to print verbatim.
+    assert.doesNotMatch(result.stderr, /concurrent run on this host must have won the race/u)
+    assert.doesNotMatch(result.stderr, /this registration started/u)
+    assertNoSecretLeaked(result, 'key adopt live-collision refusal')
+
+    const live = readSecret(stub.origin, 'eve-agent', { homeDir: home.dir })
+    assert.equal(live.value.merchant_key, merchantKey, 'the live entry was never overwritten')
+    const staging = readSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+    assert.ok(staging.found, 'the staging copy is left in place on refusal, not deleted')
+  } finally {
+    deleteSecret(stub.origin, 'eve-agent', { homeDir: home.dir })
+    deleteSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
 // --- Finding 9: the test env overlay never leaks the real developer's own -
 // AGENT_1F3EA_SECRET / IDENTITY_ORIGIN into a driven child process.
 

@@ -825,6 +825,20 @@ function storeSecret(origin, label, payload, deps = {}) {
 class SecretReadFailure extends Error {}
 
 /**
+ * Thrown only by promoteReplacementKey's `refuseIfPresent` re-check below,
+ * when the lock-protected read finds a live vault entry that was not there
+ * when the caller's own pre-flight check ran. Its default `.message` is
+ * worded for register()'s specific meaning of that situation -- a
+ * concurrent registration won a race for the same handle -- which is wrong
+ * for a caller like `key adopt` that never registered anything and is only
+ * trying to promote an already-known-good staged key. A typed class (rather
+ * than matching on `.message` text) lets each caller catch this one
+ * specific case and reword it for its own meaning, while every other
+ * failure out of promoteReplacementKey still surfaces as a plain Error.
+ */
+class LiveVaultEntryExistsError extends Error {}
+
+/**
  * The counterpart to storeSecret: reads back the JSON bundle this script
  * wrote for `label`. Returns `{ found: false, value: null }` when nothing is
  * stored there. Returns `{ found: true, value }` when the stored entry was
@@ -1028,8 +1042,10 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
       throw new Error(
         `refusing to overwrite the existing vault entry for "${handle}": ${error.message}. ` +
         'The already-confirmed replacement key was NOT lost -- it is still stored under the ' +
-        `staging label "${stagingLabel}". Resolve the unreadable entry, read the replacement key back ` +
-        `from "${stagingLabel}", then store it under "${handle}" yourself.`,
+        `staging label "${stagingLabel}". Resolve the unreadable entry, then run ` +
+        `\`key adopt --handle ${handle} --from-label ${stagingLabel}\` to move it -- or, if that is not ` +
+        `available, read the replacement key back from "${stagingLabel}" yourself and store it under ` +
+        `"${handle}" by hand.`,
       )
     }
     if (refuseIfPresent && previous.found) {
@@ -1071,7 +1087,7 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
           '-- it cannot be recovered from this vault. Check whatever recorded the merchant_key when this ' +
           'registration confirmed (terminal scrollback, a captured --reveal run) before concluding it is ' +
           'gone for good.'
-      throw new Error(
+      throw new LiveVaultEntryExistsError(
         `refusing to overwrite the vault entry for "${handle}" that now exists: it was not there when this ` +
         'registration started, so a concurrent run on this host must have won the race for this handle. ' +
         stagingNote,
@@ -1090,8 +1106,10 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
     } catch (error) {
       throw new Error(
         `the rotation/recovery already CONFIRMED, so the old key for "${handle}" no longer works: ${error.message}. ` +
-        `The replacement key is stored under "${stagingLabel}" and nowhere else -- read it back from ` +
-        `"${stagingLabel}", then store it under "${handle}" yourself before doing anything else.`,
+        `The replacement key is stored under "${stagingLabel}" and nowhere else -- run ` +
+        `\`key adopt --handle ${handle} --from-label ${stagingLabel}\` to move it, or, if that is not ` +
+        `available, read it back from "${stagingLabel}" yourself and store it under "${handle}" before doing ` +
+        'anything else.',
       )
     }
     deleteSecret(origin, stagingLabel, deps)
@@ -1111,7 +1129,9 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
       `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: another registration, rotation, or recovery for the same handle ` +
       'appears to still be running concurrently on this host. The already-confirmed replacement key was NOT ' +
       `lost -- it is still stored under the staging label "${stagingLabel}" and nowhere else. Retry once the ` +
-      `other run finishes, or read the key back from "${stagingLabel}" and store it under "${handle}" yourself.`,
+      `other run finishes -- either the original command, or \`key adopt --handle ${handle} --from-label ` +
+      `${stagingLabel}\` -- or, if that is not available, read the key back from "${stagingLabel}" and store ` +
+      `it under "${handle}" yourself.`,
     )
   }
   return result
@@ -2083,4 +2103,5 @@ if (isMainModule) {
 export {
   storeSecret, readSecret, deleteSecret, listVaultLabels, promoteReplacementKey, SecretReadFailure, shouldReveal,
   HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE, isValidModel, parseKeychainServiceNames, unescapeSecurityDumpString,
+  LiveVaultEntryExistsError,
 }
