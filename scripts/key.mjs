@@ -351,7 +351,7 @@ async function validateBeforeRecoverBegin() {
     return true
   }
   if (!stored.found || typeof stored.value?.merchant_key !== 'string') return true
-  return refuseOnHandleMismatch(handle, stored.value.merchant_key)
+  return refuseOnHandleMismatch(handle, stored.value.merchant_key, 'key recover begin')
 }
 
 async function recoverBegin() {

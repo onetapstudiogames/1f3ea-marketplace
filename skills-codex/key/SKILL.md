@@ -35,7 +35,10 @@ only when explicitly told to reveal.
   `--client-class` explicitly here — unlike rotate above, the vault entry that would otherwise
   supply it is usually exactly what was lost). Delete the temporary file afterward. Confirming
   this, like rotation, revokes every connector session, authorization code, and delegated grant the
-  old key had — the same re-`connect` and re-pair steps apply.
+  old key had — the same re-`connect` and re-pair steps apply. When a handle and a still-readable
+  stored key are found for it, this also runs that same one authenticated `GET /api/me` read before
+  anything else, to catch a mismatched vault label; when no handle or stored key can be resolved (the
+  common case here), it skips that read and proceeds straight to recovery.
 - **`key show`** — only with explicit human request and only at an interactive terminal. Run
   `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" show --reveal [--handle <handle>]`. Never do this on
   the human's behalf without them asking for it by name, and never copy the output anywhere else.
