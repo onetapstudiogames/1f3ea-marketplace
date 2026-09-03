@@ -1643,6 +1643,20 @@ test(
         .filter(label => label.startsWith('alice-agent--pending-registration-'))
       assert.equal(strandedLabels.length, 1, 'exactly one stranded registration staging label was left behind')
 
+      // Round-2 item 5 (LOW): pin promoteReplacementKey's own lock-timeout
+      // message -- the one pass 2 itself hits -- so a future edit cannot
+      // silently drop the `key adopt` remedy it names. setup.mjs relays the
+      // failed register() child's own stderr into its own stdout (via
+      // `say`/`lines`) in this failure branch, not onto its own stderr.
+      assert.match(
+        pass2.stdout,
+        /key adopt --handle alice-agent --from-label alice-agent--pending-registration-[0-9a-f]+/u,
+      )
+      // Round-2 item 2 (MEDIUM): a first-time registration's own strand
+      // message must never read as a rotation/recovery -- there is no old
+      // key here to describe as dead.
+      assert.doesNotMatch(pass2.stdout, /old key/iu)
+
       // Release the simulated lock -- a real held lock from another process
       // would not still be held by the time an entirely separate, later
       // session starts.
@@ -1915,8 +1929,13 @@ test('key adopt: refuses in its own words, not register()\'s race wording, when 
     )
     assert.notEqual(result.status, 0, 'refuses to overwrite the live entry')
     assert.match(result.stderr, /the vault already holds a live entry for "eve-agent"/u)
-    assert.match(result.stderr, new RegExp(`key status --handle eve-agent`, 'u'))
-    assert.match(result.stderr, /delete it by hand/u)
+    assert.match(result.stderr, /ALSO currently authenticates as that same handle/u)
+    // Round-2 HIGH finding: never propose deleting the staging copy -- the
+    // one that just authenticated -- without pointing at reading the live
+    // entry too. `key status` alone cannot show the staging copy's key.
+    assert.match(result.stderr, new RegExp(`key show --handle eve-agent --reveal`, 'u'))
+    assert.match(result.stderr, new RegExp(`key show --handle ${stagingLabel} --reveal`, 'u'))
+    assert.doesNotMatch(result.stderr, /delete it by hand/u)
     // The old register()-worded message this used to print verbatim.
     assert.doesNotMatch(result.stderr, /concurrent run on this host must have won the race/u)
     assert.doesNotMatch(result.stderr, /this registration started/u)
@@ -1929,6 +1948,84 @@ test('key adopt: refuses in its own words, not register()\'s race wording, when 
   } finally {
     deleteSecret(stub.origin, 'eve-agent', { homeDir: home.dir })
     deleteSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+// --- Round-2 HIGH finding: a stranded ROTATION (or RECOVERY) leaves the
+// live entry holding the now-dead OLD key while the staging label holds
+// the only copy of the market-confirmed NEW one -- rotate()/recoverBegin()
+// intentionally overwrite the live entry for an already-owned handle, so
+// they never pass refuseIfPresent, and if their own promote step then
+// strands (lock timeout, unreadable entry, store failure), the two
+// promoteReplacementKey messages an agent sees at that exact moment name
+// `key adopt` as the first remedy. Before this fix, adopt always refused
+// in exactly this state (it always passed refuseIfPresent:true), leaving
+// the agent no working command -- only a recipe -- and its own refusal
+// then pointed at deleting the staging copy, the ONLY place the working
+// key lived, after the market had already invalidated every recovery
+// code. This builds that exact vault state (reviewer's harness,
+// scratchpad/pr14b-rotstrand.mjs) and proves the now-named remedy actually
+// works: the printed `key adopt` command succeeds, and the vault ends
+// with exactly one live, working entry and no staging copy left behind.
+test('key adopt: recovers a rotation-strand -- live entry holds a dead key, staging holds the only working one -- leaving one live working entry and no staging copy', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-rotation-strand-')
+  const origin = stub.origin
+  const handle = 'rota-agent'
+  const stagingLabel = 'rota-agent--pending-rotation-0000beef'
+  const workingKey = `1f3ea_sk_${'a'.repeat(48)}`
+  const deadKey = `1f3ea_sk_${'b'.repeat(48)}`
+  try {
+    // The market already confirmed the rotation server-side: only the NEW
+    // key authenticates from here on.
+    stub.merchants.set(handle, { merchant_key: workingKey, recovery_codes: [], client_class: 'coding_persistent' })
+    // Local vault exactly as promoteReplacementKey's own storeSecret-failure
+    // or lock-timeout branch leaves it: the live entry still holds the now-
+    // dead OLD key, and the staging label holds the only copy of the
+    // confirmed NEW one.
+    storeSecret(origin, handle, {
+      kind: 'merchant', handle, client_class: 'coding_persistent',
+      merchant_key: deadKey, recovery_codes: [], origin, stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+    storeSecret(origin, stagingLabel, {
+      kind: 'staging', handle, client_class: 'coding_persistent',
+      merchant_key: workingKey, origin, stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    // Confirm the strand really is what the two reworded strand messages
+    // describe: the stored (live) key does not work.
+    const before = readSecret(origin, handle, { homeDir: home.dir })
+    assert.equal(before.value.merchant_key, deadKey)
+
+    // The exact command the two reworded messages now name first.
+    const result = await runNode(
+      keyPath,
+      ['adopt', '--origin', origin, '--handle', handle, '--from-label', stagingLabel],
+      { env: home.env },
+    )
+    assert.equal(result.status, 0, `the named remedy must actually succeed in this state: ${result.stderr}`)
+    assert.match(result.stdout, /handle: rota-agent/u)
+    assert.match(result.stdout, /replacing the dead live entry found there/u)
+    assertNoSecretLeaked(result, 'key adopt rotation-strand recovery')
+
+    const labelsAfter = listRawVaultLabels(origin, home.dir)
+    assert.deepEqual(labelsAfter, [handle], 'exactly one live entry and no staging copy remain')
+
+    const live = readSecret(origin, handle, { homeDir: home.dir })
+    assert.equal(live.found, true)
+    assert.equal(live.value.merchant_key, workingKey, 'the live entry now holds the working key, not the dead one')
+    assert.ok(live.value.recovery_codes_invalidated_at, 'carries the invalidation marker rotate() itself would have written')
+
+    const staging = readSecret(origin, stagingLabel, { homeDir: home.dir })
+    assert.equal(staging.found, false, 'the staging copy is deleted once promotion succeeds')
+
+    const statusAfter = await runNode(keyPath, ['status', '--origin', origin, '--handle', handle], { env: home.env })
+    assert.equal(statusAfter.status, 0)
+    assert.match(statusAfter.stdout, /stored key: works/u)
+  } finally {
+    for (const label of listRawVaultLabels(origin, home.dir)) deleteSecret(origin, label, { homeDir: home.dir })
     home.cleanup()
     await stub.close()
   }

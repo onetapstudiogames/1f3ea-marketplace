@@ -492,7 +492,7 @@ test('promoteReplacementKey refuses to swallow a write failure after the server 
     assert.throws(
       () => promoteReplacementKey(origin, handle, stagingLabel, 'new-key', (previous) => ({
         ...(previous?.client_class ? { client_class: previous.client_class } : {}),
-      }), deps),
+      }), deps, { keyNoun: 'the confirmed replacement key from this rotation', oldKeyNoun: 'the old key' }),
       (error) => {
         assert.match(error.message, /old key.*no longer works/iu, 'names the old key as already dead')
         assert.match(
@@ -501,6 +501,82 @@ test('promoteReplacementKey refuses to swallow a write failure after the server 
           'names the staging label where the confirmed replacement key still lives',
         )
         assert.doesNotMatch(error.message, /new-key|old-key/u, 'never includes the raw key values')
+        return true
+      },
+    )
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+// --- Round-2 item 2 (MEDIUM): promoteReplacementKey's storeSecret-failure ---
+// and unreadable-existing-entry messages take a caller-supplied keyNoun/
+// oldKeyNoun pair instead of a hardcoded "replacement key" / "rotation or
+// recovery" framing, so a first-time registration is never told about an
+// "old key" that never existed. register()/adopt() (into an empty slot)
+// pass oldKeyNoun: null; rotate()/recoverBegin()/adopt() (over a proven-dead
+// live entry) pass oldKeyNoun: 'the old key' / 'the dead live key'.
+
+test('promoteReplacementKey\'s storeSecret-failure message never claims an "old key" when the caller passes no oldKeyNoun (register()\'s own shape)', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'promote-write-fail-register'
+  const stagingLabel = `${handle}--pending-registration-deadbeef`
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') throw new Error('not found')
+    if (command === 'security' && args[0] === '-i') throw new Error('keychain is locked')
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'new-key', () => ({}), deps, {
+        keyNoun: 'the confirmed merchant key from this registration',
+        oldKeyNoun: null,
+      }),
+      (error) => {
+        assert.doesNotMatch(error.message, /old key/iu, 'a first registration has no old key to describe as dead')
+        assert.doesNotMatch(error.message, /rotation\/recovery already CONFIRMED/u, 'never reads as a rotation')
+        assert.match(error.message, /storing the confirmed merchant key from this registration under/u)
+        assert.match(
+          error.message,
+          new RegExp(`key adopt --handle ${handle} --from-label ${stagingLabel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'),
+        )
+        return true
+      },
+    )
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('promoteReplacementKey\'s unreadable-existing-entry message names the caller\'s own keyNoun, not a generic "replacement key"', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'promote-unreadable-live'
+  const stagingLabel = `${handle}--pending-rotation`
+  // A corrupt (non-JSON-after-decode) keychain entry: readSecret's darwin
+  // branch throws SecretReadFailure for this, not "not found".
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') {
+      return Buffer.from('not valid json', 'utf8').toString('base64')
+    }
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'new-key', () => ({}), deps, {
+        keyNoun: 'the confirmed replacement key from this rotation',
+        oldKeyNoun: 'the old key',
+      }),
+      (error) => {
+        assert.match(error.message, /refusing to overwrite the existing vault entry for "promote-unreadable-live"/u)
+        assert.match(error.message, /The confirmed replacement key from this rotation was NOT lost/u)
+        assert.match(
+          error.message,
+          new RegExp(`key adopt --handle ${handle} --from-label ${stagingLabel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'),
+        )
         return true
       },
     )
