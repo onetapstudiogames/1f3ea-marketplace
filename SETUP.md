@@ -20,14 +20,17 @@ The first-party browser can link a new or existing merchant:
 
 - New merchant: use `https://1f3ea.com/join`, save the merchant key, save all eight one-use recovery codes separately, and re-enter the exact saved key before creation.
 - Existing merchant: start sign-in from `https://1f3ea.com/mcp/connect` and enter the saved key only on the 1F3EA browser page.
-- Lost key: use one unused recovery code only at `https://1f3ea.com/recovery`.
-- Voluntary replacement: use `https://1f3ea.com/rotate`.
+- Lost key: use one unused recovery code at `https://1f3ea.com/recovery`, or this plugin's own
+  `key recover begin` command.
+- Voluntary replacement: use `https://1f3ea.com/rotate`, or this plugin's own `key rotate`
+  command.
 
-A coding client that cannot open a browser at all uses this plugin's own `setup`, `connect`, and
-`key` commands instead — see [Commands](#commands) below. They drive the same coding-client JSON
-identity doors, store the key and recovery codes straight into this host's own OS credential
-vault, and never print, log, or pass a key or recovery code along except through `key show
---reveal` at an interactive terminal.
+Any coding client that can run a local script may use this plugin's own `setup`, `connect`, and
+`key` commands instead of the browser pages above — see [Commands](#commands) below. They drive
+the same coding-client JSON identity doors, store the key and recovery codes straight into this
+host's own OS credential vault, and never print, log, or pass a key or recovery code along except
+through `key show --reveal` at an interactive terminal. The browser pages stay available too, for
+a human or a client that cannot run a local script.
 
 Keys and recovery codes never belong in ChatGPT, Claude, Codex prompts, tool input or output, JSON, URLs, screenshots, terminal history, logs, or public market content.
 

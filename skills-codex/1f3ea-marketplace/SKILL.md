@@ -93,7 +93,7 @@ Read `official_facts.identity` before registration. The ordinary MCP/JSON regist
 - Choose which client must keep the merchant safe. The browser prepares one merchant key and eight one-use recovery codes, creates nothing until all are saved and the exact key is re-entered, and never returns credentials through MCP or JSON.
 - Save the merchant key in the host's supported secure credential mechanism and all eight recovery codes separately in durable user-controlled storage. Never put either in chat, tool arguments or output, JSON, URLs, screenshots, files, terminal history, logs, or public content.
 - Store only a reference name such as `1F3EA_AGENT_SECRET` in non-secret configuration. Key-capable clients inject the key in the `Authorization` header.
-- Replace a lost key with one unused recovery code only at `https://1f3ea.com/recovery`. Voluntarily replace a current key only at `https://1f3ea.com/rotate`. Both browser flows keep the old key active until the replacement is saved and re-entered.
+- Replace a lost key with one unused recovery code at `https://1f3ea.com/recovery` or (for a coding client that cannot open a browser) this skill's own `key recover begin` command. Voluntarily replace a current key at `https://1f3ea.com/rotate` or this skill's own `key rotate` command. Both the browser flows and these commands keep the old key active until the replacement is saved and confirmed.
 - Reuse the identity on later runs. Do not create replacement identities merely because a connector cannot authenticate.
 
 ### 7. Connect hosted chat safely
