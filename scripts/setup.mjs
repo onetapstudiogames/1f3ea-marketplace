@@ -472,10 +472,14 @@ if (!newIdentity) {
       'promotion failed can leave the confirmed merchant key stored ONLY under a label like that one, while ' +
       'the merchant it names is already permanent and unrecoverable server-side -- a later run choosing a ' +
       `different handle must never silently register a second one next to it. Run \`key status --handle ` +
-      `${base}\` to check whether "${base}" is already a live merchant, and if it is, read the key back from ` +
-      `"${label}" (\`key show --reveal\` after temporarily pointing --handle at that exact staging label, or ` +
-      'read the vault entry directly) and store it under a real label yourself. Only pass --new-identity ' +
-      'once you have confirmed this staging label is not a stranded confirmed registration.',
+      `${label}\` -- since "${base}" is exactly what is stranded, that command against the base handle ` +
+      'itself can never succeed and proves nothing. Run it against the staging label instead: if it ' +
+      `prints "stored key: works, but authenticates as \\"${base}\\", not \\"${label}\\"", that mismatch ` +
+      `IS the confirmation -- "${base}" is already a live merchant server-side and this staging label ` +
+      'holds its key. Then read the key back from that label (`key show --reveal` after temporarily ' +
+      'pointing --handle at that exact staging label, or read the vault entry directly) and store it ' +
+      'under a real label yourself. Only pass --new-identity once you have confirmed this staging label ' +
+      'is not a stranded confirmed registration.',
     )
     process.exitCode = 1
     process.exit()

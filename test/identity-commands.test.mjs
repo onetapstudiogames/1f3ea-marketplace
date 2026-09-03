@@ -1561,7 +1561,16 @@ test('setup.mjs never trips the OLD "different label" guard off a staging label 
     assert.notEqual(result.status, 0, 'the NEW registration-staging-label guard refuses outright')
     assert.match(result.stderr, /registration staging label/u)
     assert.match(result.stderr, /agent-abandoned--pending-registration-deadbeef/u, 'names the exact stranded label')
-    assert.match(result.stderr, /key status --handle agent-abandoned/u, 'points at the base handle to check')
+    assert.match(
+      result.stderr,
+      /key status --handle agent-abandoned--pending-registration-deadbeef/u,
+      'points the diagnostic at the staging label, not the base handle, since the base handle can never succeed',
+    )
+    assert.match(
+      result.stderr,
+      /that mismatch\s+IS the confirmation/u,
+      'tells the agent the mismatch refusal from key status IS the proof the merchant is live',
+    )
     assert.equal(stub.merchants.size, 0, 'nothing was registered')
     assertNoSecretLeaked(result, 'setup.mjs leftover registration staging label')
   } finally {
@@ -1654,7 +1663,16 @@ test(
       assert.notEqual(laterRun.status, 0, 'a later run under a different handle must be refused')
       assert.match(laterRun.stderr, /registration staging label/u)
       assert.match(laterRun.stderr, new RegExp(strandedLabels[0].replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
-      assert.match(laterRun.stderr, /key status --handle alice-agent/u)
+      assert.match(
+        laterRun.stderr,
+        new RegExp(`key status --handle ${strandedLabels[0].replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'),
+        'points the diagnostic at the staging label, not the base handle, since the base handle can never succeed',
+      )
+      assert.match(
+        laterRun.stderr,
+        /that mismatch\s+IS the confirmation/u,
+        'tells the agent the mismatch refusal from key status IS the proof the merchant is live',
+      )
       assertNoSecretLeaked(laterRun, 'setup.mjs stranded-registration duplicate-merchant refusal')
 
       assert.equal(stub.merchants.size, 1, 'still exactly one server merchant -- no second one was ever created')
