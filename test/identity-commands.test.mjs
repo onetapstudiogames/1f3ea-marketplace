@@ -128,26 +128,41 @@ test('two concurrent register runs for the same handle: the winner promotes, the
     const loser = first.status === 0 ? second : first
     assert.equal(winner.status, 0, `exactly one run must succeed (stderr: ${first.stderr}\n---\n${second.stderr})`)
     assert.notEqual(loser.status, 0, 'the other run must refuse rather than silently overwrite')
-    assert.match(loser.stderr, /now exists/u, 'names the race, not a generic failure')
 
+    // Two outcomes are both a correct refusal, and which one actually
+    // happens depends on how tightly the two real subprocesses' stage
+    // requests interleave on this host/CI runner -- not on anything this
+    // client controls: (a) both stage calls land before either confirms,
+    // so the market accepts both stages and the race is decided by THIS
+    // client's own per-(origin, handle) vault lock at the final promote
+    // step ("now exists"); or (b) the winner's entire stage+confirm
+    // sequence completes before the loser's own stage call ever reaches
+    // the market, so the market's own stage-time duplicate-handle check
+    // refuses the loser first ("already taken"), before it ever reaches a
+    // staging label at all. Both are the property this test actually
+    // verifies -- no duplicate merchant is ever created -- so assert on
+    // whichever one actually happened rather than assuming outcome (a).
     const stagingLabelMatch = /staging label "([^"]+)"/u.exec(loser.stderr)
-    assert.ok(stagingLabelMatch, `the refusal names the loser's own staging label (stderr: ${loser.stderr})`)
-    const [, stagingLabel] = stagingLabelMatch
-    assert.match(
-      stagingLabel,
-      /^race-probe-handle--pending-registration-[0-9a-f]+$/u,
-      'the staging label is the per-run suffixed form, not the bare (shareable) one',
-    )
+    if (stagingLabelMatch) {
+      assert.match(loser.stderr, /now exists/u, 'names the client-side vault race, not a generic failure')
+      const [, stagingLabel] = stagingLabelMatch
+      assert.match(
+        stagingLabel,
+        /^race-probe-handle--pending-registration-[0-9a-f]+$/u,
+        'the staging label is the per-run suffixed form, not the bare (shareable) one',
+      )
+      const staging = readSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+      assert.equal(staging.found, true, "the loser's own staging copy is still there -- the winner's cleanup never touched it")
+      assert.equal(staging.value.handle, 'race-probe-handle')
+      assert.ok(staging.value.merchant_key, 'the confirmed replacement key is actually recoverable from the named label')
+      deleteSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+    } else {
+      assert.match(loser.stderr, /already taken|handle_taken/u, 'names the market\'s own duplicate-handle refusal')
+    }
 
-    const staging = readSecret(stub.origin, stagingLabel, { homeDir: home.dir })
-    assert.equal(staging.found, true, "the loser's own staging copy is still there -- the winner's cleanup never touched it")
-    assert.equal(staging.value.handle, 'race-probe-handle')
-    assert.ok(staging.value.merchant_key, 'the confirmed replacement key is actually recoverable from the named label')
-
+    assert.equal(stub.merchants.size, 1, 'exactly one merchant was registered by the race, regardless of which refusal fired')
     assertNoSecretLeaked(winner, 'register race winner')
     assertNoSecretLeaked(loser, 'register race loser')
-
-    deleteSecret(stub.origin, stagingLabel, { homeDir: home.dir })
   } finally {
     deleteSecret(stub.origin, 'race-probe-handle', { homeDir: home.dir })
     home.cleanup()
