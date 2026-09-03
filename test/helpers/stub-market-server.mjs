@@ -11,10 +11,15 @@
 // source (src/market-identity-json-routes.ts, src/market-pairing-routes.ts,
 // src/core.ts) -- not invented independently -- because a test that proves
 // the client works against a fictional contract proves nothing about
-// whether it works against the real one. Rate limiting, the exact 64-hex
-// ceremony-token shape, and Postgres-level deadlock retry are NOT modeled:
-// nothing here needs them, and the real client never inspects session/csrf
-// beyond passing back exactly what it was given.
+// whether it works against the real one. Rate limiting and Postgres-level
+// deadlock retry are NOT modeled: nothing here needs them. Field presence
+// (exactJsonFields is subset-only: extra keys are refused, missing ones are
+// left for the per-field validators below to catch with the real door's own
+// reason name) and the session/csrf 64-hex ceremony-token shape ARE modeled
+// (mirrors requireCeremony's invalid_ceremony guard), because a caller
+// relies on those specific reason names to decide what to do next; the
+// actual match against a staged session's own value is still this stub's
+// plain Map lookup, not the market's real hashed-lookup mechanism.
 //
 // Served over HTTPS (with the self-signed localhost fixture cert in
 // test/helpers/fixtures/) because scripts/lib/origin-guard.mjs refuses plain
@@ -36,6 +41,9 @@ const TLS_OPTIONS = {
 // (src/core.ts: secret => 'sk_' + 48 hex, recovery_code => 'rc_' + 64 hex)
 // and the handle rule every JSON door enforces (src/core.ts HANDLE_RE).
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/u
+// src/market-identity-fields.ts CEREMONY_TOKEN_RE -- both session and csrf
+// must be exactly this shape before this stub even looks either up.
+const CEREMONY_TOKEN_RE = /^[0-9a-f]{64}$/u
 const CODING_CLIENT_CLASSES = new Set(['coding_persistent', 'coding_ephemeral'])
 const CEREMONY_SECONDS = 900
 const PAIRING_CODE_SECONDS = 10 * 60
@@ -84,12 +92,19 @@ function bearerKey(req) {
   return match ? match[1] : null
 }
 
-/** Object.keys(body) is EXACTLY `allowed`, no more, no fewer -- mirrors exactJsonFields in bounded-json.ts. */
+/**
+ * Subset-only, exactly like exactJsonFields in bounded-json.ts: every key
+ * `body` carries must be in `allowed`, but `allowed` may have keys `body`
+ * does not -- a MISSING field is never this check's job. That is left to
+ * the per-field validators below (requireClientClass, the handle/model
+ * check, requireCeremonyFields), which produce the real door's own reason
+ * name for a missing or malformed value instead of the generic
+ * unexpected_fields this used to return for both cases alike.
+ */
 function exactFields(body, allowed) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return false
-  const keys = Object.keys(body)
-  if (keys.length !== allowed.length) return false
-  return allowed.every(name => Object.prototype.hasOwnProperty.call(body, name))
+  const allowedNames = new Set(allowed)
+  return Object.keys(body).every(key => allowedNames.has(key))
 }
 
 function requireFields(res, body, allowed) {
@@ -118,6 +133,30 @@ function requireClientClass(res, body) {
   return null
 }
 
+/**
+ * Mirrors requireCeremony in market-identity-json-routes.ts -- checked
+ * BEFORE the pending-stage lookup on every confirm/cancel door, so a
+ * missing or malformed session/csrf is refused with invalid_ceremony
+ * rather than being looked up (as `undefined`, or as a well-formed but
+ * unrecognized value) and reported as the unrelated request_unavailable.
+ * Returns `true` and does nothing when both fields are present and shaped
+ * like a real ceremony token; the actual match against a staged session's
+ * own value is still each caller's own Map lookup.
+ */
+function requireCeremonyFields(res, body) {
+  const { session, csrf } = body
+  if (
+    typeof session === 'string' && typeof csrf === 'string'
+    && CEREMONY_TOKEN_RE.test(session) && CEREMONY_TOKEN_RE.test(csrf)
+  ) return true
+  fail(
+    res, 403, 'invalid_ceremony',
+    'session and csrf must be the exact 64-character hex values returned by the earlier stage, ' +
+      'begin, or generate response.',
+  )
+  return false
+}
+
 const REGISTER_STAGE_FIELDS = ['action', 'handle', 'model', 'client_class', 'human_approved']
 const REGISTER_CONFIRM_FIELDS = ['action', 'session', 'csrf', 'merchant_key']
 const REGISTER_CANCEL_FIELDS = ['action', 'session', 'csrf']
@@ -140,21 +179,27 @@ const RECOVERY_CANCEL_FIELDS = ['action', 'session', 'csrf']
  * register's 'confirm' action for any session whose staged handle equals
  * `handle` is held -- not responded to at all -- until `count` such confirm
  * requests are concurrently outstanding, at which point every held one is
- * released together. This exists for exactly one caller: the concurrent-
- * registration race test in test/identity-commands.test.mjs, which needs
- * its two real subprocesses to genuinely overlap rather than hoping OS
- * scheduling makes them. 'confirm' is always the LAST network call
- * register() makes before that process's own local pre-flight vault check
- * (readSecret, called right after stage() -- see register()'s own comment
- * in identity-client.mjs) -- so a confirm request reaching this server
- * already proves that process's own pre-flight check has already run.
- * Holding every such request until `count` have arrived therefore
- * guarantees, structurally rather than by luck, that no process can reach
- * its own vault write before every other racing process has already staged
- * and pre-flight-checked -- which is the actual overlap the race test means
- * to exercise. Every other caller of this function omits the option, so it
- * changes nothing about the ~20 other scenarios sharing this stub.
+ * released together. A held request is also released, on its own, after
+ * REGISTER_CONFIRM_BARRIER_TIMEOUT_MS if `count` never arrives (one racing
+ * subprocess failing before its own confirm -- a PowerShell CredWrite
+ * hiccup, a storeSecret refusal, a crash) -- so that turns into a loud,
+ * failing assertion in the test instead of an indefinite CI hang. This
+ * exists for exactly one caller: the concurrent-registration race test in
+ * test/identity-commands.test.mjs, which needs its two real subprocesses to
+ * genuinely overlap rather than hoping OS scheduling makes them.
+ * confirm is the FIRST network call register() makes AFTER its own local
+ * pre-flight vault check (readSecret, called right after stage() -- see
+ * register()'s own comment in identity-client.mjs) -- so a confirm request
+ * reaching this server already proves that process's own pre-flight check
+ * has already run. Holding every such request until `count` have arrived
+ * therefore guarantees, structurally rather than by luck, that no process
+ * can reach its own vault write before every other racing process has
+ * already staged and pre-flight-checked -- which is the actual overlap the
+ * race test means to exercise. Every other caller of this function omits
+ * the option, so it changes nothing about the ~20 other scenarios sharing
+ * this stub.
  */
+const REGISTER_CONFIRM_BARRIER_TIMEOUT_MS = 10_000
 export async function startStubMarketServer({ registerConfirmBarrier, pairingUnavailable = false } = {}) {
   const merchants = new Map()
   // Every pending map is keyed by `session` (an opaque value, unrelated to
@@ -165,6 +210,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
   const pendingRotations = new Map() // session -> { handle, merchant_key, client_class, csrf }
   const pendingRecoveries = new Map() // session -> { handle, merchant_key, csrf }
   let confirmBarrierWaiters = []
+  let confirmBarrierTimer = null
 
   function findByKey(map, key) {
     return [...map.entries()].find(([, value]) => value.merchant_key === key)
@@ -232,6 +278,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
         }
         if (body.action === 'confirm') {
           if (!requireFields(res, body, REGISTER_CONFIRM_FIELDS)) return
+          if (!requireCeremonyFields(res, body)) return
           const pending = pendingRegistrations.get(body.session)
           if (!pending || pending.csrf !== body.csrf) {
             return fail(
@@ -250,7 +297,23 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
             // never both observe a stale waiters length and both release.
             await new Promise(releaseThis => {
               confirmBarrierWaiters.push(releaseThis)
+              if (confirmBarrierWaiters.length === 1) {
+                // Deadline for THIS batch: if `count` never arrives (a
+                // racing subprocess failed before reaching its own
+                // confirm), release whoever IS waiting instead of parking
+                // them here forever -- see the doc comment above.
+                confirmBarrierTimer = setTimeout(() => {
+                  const waiters = confirmBarrierWaiters
+                  confirmBarrierWaiters = []
+                  confirmBarrierTimer = null
+                  for (const release of waiters) release()
+                }, REGISTER_CONFIRM_BARRIER_TIMEOUT_MS)
+              }
               if (confirmBarrierWaiters.length >= registerConfirmBarrier.count) {
+                if (confirmBarrierTimer) {
+                  clearTimeout(confirmBarrierTimer)
+                  confirmBarrierTimer = null
+                }
                 const waiters = confirmBarrierWaiters
                 confirmBarrierWaiters = []
                 for (const release of waiters) release()
@@ -275,6 +338,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
         }
         if (body.action === 'cancel') {
           if (!requireFields(res, body, REGISTER_CANCEL_FIELDS)) return
+          if (!requireCeremonyFields(res, body)) return
           const pending = pendingRegistrations.get(body.session)
           if (!pending || pending.csrf !== body.csrf) {
             return fail(res, 403, 'request_unavailable', 'No staged registration is waiting for this session and csrf.')
@@ -307,6 +371,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
         }
         if (body.action === 'confirm') {
           if (!requireFields(res, body, ROTATE_CONFIRM_FIELDS)) return
+          if (!requireCeremonyFields(res, body)) return
           const pending = pendingRotations.get(body.session)
           if (!pending || pending.csrf !== body.csrf) {
             return fail(
@@ -329,6 +394,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
         }
         if (body.action === 'cancel') {
           if (!requireFields(res, body, ROTATE_CANCEL_FIELDS)) return
+          if (!requireCeremonyFields(res, body)) return
           const pending = pendingRotations.get(body.session)
           if (!pending || pending.csrf !== body.csrf) {
             return fail(res, 403, 'request_unavailable', 'No staged rotation is waiting for this session and csrf.')
@@ -376,6 +442,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
         }
         if (body.action === 'confirm') {
           if (!requireFields(res, body, RECOVERY_CONFIRM_FIELDS)) return
+          if (!requireCeremonyFields(res, body)) return
           const pending = pendingRecoveries.get(body.session)
           if (!pending || pending.csrf !== body.csrf) {
             return fail(
@@ -393,6 +460,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
         }
         if (body.action === 'cancel') {
           if (!requireFields(res, body, RECOVERY_CANCEL_FIELDS)) return
+          if (!requireCeremonyFields(res, body)) return
           const pending = pendingRecoveries.get(body.session)
           if (!pending || pending.csrf !== body.csrf) {
             return fail(res, 403, 'request_unavailable', 'No staged recovery is waiting for this session and csrf.')
