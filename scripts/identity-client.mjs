@@ -97,6 +97,23 @@ const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/u
 // what the market itself would otherwise accept.
 const RESERVED_HANDLE_SUBSTRING_RE = /--pending-/u
 
+// Mirrors the market's own identityModelValue (src/market-identity-fields.ts
+// on the market server): at most 120 CODE POINTS (not UTF-16 units) after
+// trimming, and no control or directional-override marks. Checked here,
+// before register() ever stages a registration, so a model the market was
+// always going to refuse never burns a two-pass human-approval round trip --
+// setup.mjs mirrors this same rule locally too, even earlier, for the exact
+// same reason (and the stub market server in test/helpers/stub-market-server.mjs
+// carries its own matching copy, so a test can pin the divergence closed on
+// both sides).
+const DISALLOWED_MODEL_CHARACTERS_RE =
+  new RegExp('[\u0000-\u001f\u007f\u061c\u200e\u200f\u2028-\u202e\u2066-\u2069]', 'u')
+
+function isValidModel(model) {
+  const trimmed = model.trim()
+  return Array.from(trimmed).length <= 120 && !DISALLOWED_MODEL_CHARACTERS_RE.test(trimmed)
+}
+
 // The one legal (letter-first) environment variable name used everywhere a
 // merchant key is read from the host's own secret store -- by the printed
 // `claude mcp add` / `codex mcp add` commands (scripts/connect.mjs,
@@ -620,6 +637,52 @@ function writeMacKeychainCredential(execImpl, service, account, base64Blob) {
 }
 
 /**
+ * Parses `security dump-keychain`'s own metadata-only listing (never `-d`,
+ * which would ALSO dump every item's secret data) into the "svce" (service)
+ * attribute value of every generic-password item it printed. Real output
+ * for one item looks like:
+ *
+ *   keychain: "/Users/agent/Library/Keychains/login.keychain-db"
+ *   version: 512
+ *   class: "genp"
+ *   attributes:
+ *       0x00000007 <blob>="1f3ea:https://1f3ea.com:alice"
+ *       0x00000008 <blob>=<NULL>
+ *       "acct"<blob>="alice"
+ *       ...
+ *       "svce"<blob>="1f3ea:https://1f3ea.com:alice"
+ *       "sync"<sint32>=0x00000000
+ *       "tomb"<sint32>=0x00000000
+ *       "type"<uint32>=<NULL>
+ *
+ * -- the `"svce"<blob>="..."` line is the one this reads; `security` itself
+ * escapes an embedded `"` in that quoted value as `\"` and any other
+ * non-printable byte as a 3-digit octal `\NNN` escape, both undone here. A
+ * line whose value is `<NULL>` (no service name at all) is skipped. This
+ * repo's own darwin backend cannot run on a non-macOS CI runner, so this
+ * parser is pinned in test/identity-client.test.mjs against a captured,
+ * documented sample of real `security dump-keychain` output, never against
+ * a live `security` binary.
+ */
+function parseKeychainServiceNames(dumpOutput) {
+  const services = []
+  const serviceLineRe = /^\s*"svce"<blob>=(.*)$/gmu
+  let match
+  while ((match = serviceLineRe.exec(dumpOutput)) !== null) {
+    const raw = match[1].trim()
+    if (raw === '<NULL>') continue
+    const quoted = /^"((?:\\.|[^"\\])*)"/u.exec(raw)
+    if (!quoted) continue
+    const unescaped = quoted[1]
+      .replace(/\\([0-7]{3})/gu, (_wholeMatch, octal) => String.fromCharCode(parseInt(octal, 8)))
+      .replace(/\\"/gu, '"')
+      .replace(/\\\\/gu, '\\')
+    services.push(unescaped)
+  }
+  return services
+}
+
+/**
  * Writes one secret bundle to the OS credential store and returns a
  * human-readable, secret-free description of where it went. Store one JSON
  * blob per identity (key + recovery codes together) so a caller resuming
@@ -1107,7 +1170,31 @@ function listVaultLabels(origin, deps = {}) {
   if (os === 'darwin') {
     const index = readVaultIndex(deps.homeDir)
     const indexMap = vaultIndexEntriesToMap(Array.isArray(index[origin]) ? index[origin] : [])
-    return [...indexMap.keys()].filter(label => !isStagingLabel(label, indexMap))
+    // `security dump-keychain` (metadata only -- NEVER `-d`, which would
+    // also dump every item's SECRET data) is what actually enumerates the
+    // Keychain itself, unioned with the non-secret index below the exact
+    // same way the win32 branch above unions `cmdkey /list`. Without this,
+    // listVaultLabels on darwin trusted the HOME-resident index alone -- and
+    // the index lives under the same HOME a lost/reset profile or a
+    // corrupted vault-index.json can make disappear while the Keychain
+    // entries themselves are still intact, which is exactly the precondition
+    // setup.mjs's duplicate-identity guard exists to catch (state file gone,
+    // vault intact): with the index alone, that guard fails open and lets a
+    // fresh registration create a second, permanent, unrecoverable merchant
+    // right next to one that already exists.
+    const prefix = vaultTarget(origin, '')
+    const fromKeychain = []
+    try {
+      const output = execImpl('security', ['dump-keychain'], { encoding: 'utf8' })
+      for (const service of parseKeychainServiceNames(output)) {
+        if (service.startsWith(prefix)) fromKeychain.push(service.slice(prefix.length))
+      }
+    } catch {
+      // `security dump-keychain` unavailable or failed -- fall through to
+      // the index alone below, same as win32's cmdkey fallback above.
+    }
+    const labels = new Set([...fromKeychain, ...indexMap.keys()])
+    return [...labels].filter(label => !isStagingLabel(label, indexMap))
   }
   const dir = join(deps.homeDir ?? homedir(), '.1f3ea', 'credentials')
   const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
@@ -1267,6 +1354,17 @@ async function register(flags) {
     throw new Error('--client-class must be coding_persistent or coding_ephemeral')
   }
   const model = typeof flags.model === 'string' ? flags.model : ''
+  // Checked locally, before ever asking for human approval, against the
+  // exact rule the market itself enforces (identityModelValue) -- so an
+  // approval nonce is never spent on a registration the market was always
+  // going to refuse for its model label alone.
+  if (!isValidModel(model)) {
+    throw new Error(
+      '--model must be at most 120 characters after trimming, with no control or directional-override ' +
+      'marks (the market\'s own validator refuses the same); nothing was created -- fix the model label ' +
+      'before asking a human to approve this registration',
+    )
+  }
   const replaceVaultEntry = flags['replace-vault-entry'] === true
 
   let humanApproved = flags['human-approved'] === true
@@ -1436,6 +1534,28 @@ async function rotate(flags) {
     merchant_key: merchantKey,
   })
 
+  // Validated here, before staged.handle is ever used as a vault label --
+  // for the staging copy immediately below, and later for the live
+  // promotion -- the same discipline register() applies to its own
+  // confirmed handle. This is defense in depth against the market's own
+  // response somehow failing the rule this script otherwise enforces before
+  // ever registering a handle in the first place (reachable only through a
+  // compromised 1f3ea.com or an --allow-origin the operator passed, never
+  // through an honest server): without it, a wrong or hostile `handle` in
+  // the begin response would be used to stage AND later overwrite whatever
+  // vault entry already sits under that label. Nothing has been written to
+  // this vault yet at this point, so the rotation is simply cancelled and
+  // refused -- the OLD key is untouched and still the live, valid one.
+  if (!HANDLE_RE.test(staged.handle) || RESERVED_HANDLE_SUBSTRING_RE.test(staged.handle)) {
+    await cancelStage(origin, '/api/rotate', staged.session, staged.csrf)
+    throw new Error(
+      `refusing to act on the handle "${staged.handle}" this rotation's begin call named: it does not match ` +
+      `the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" sequence this script ` +
+      'uses for its own in-flight staging labels. The rotation was cancelled before anything was written to ' +
+      'this vault; the OLD key is still the live, valid one.',
+    )
+  }
+
   // Stage the replacement under a DISTINCT vault target first -- never
   // overwrite the live entry before confirm succeeds. If confirm below
   // fails for any reason, the live entry (still the OLD, still-valid key)
@@ -1519,33 +1639,94 @@ async function recoverGenerate(flags) {
     action: 'generate', client_class: clientClass, merchant_key: merchantKey,
   })
 
-  // Write the fresh codes into the LIVE `handle` entry, not a sibling
-  // `${handle}-recovery` label: a caller resuming later (rotate, recover
-  // begin, key show) reads back the vault entry for `handle` and only that
-  // entry, so a set stored anywhere else is invisible to them and the live
-  // entry keeps claiming whatever (possibly invalidated) codes it already
-  // had. If the live entry cannot be read back, this refuses to guess at
-  // its other fields (client_class) rather than silently dropping them --
-  // the market already holds the new codes as the only valid set regardless.
-  let previous
-  try {
-    previous = readSecret(origin, generated.handle)
-  } catch (error) {
+  // Validated here, before generated.handle is ever used as a vault label
+  // below -- same discipline as register()/rotate() (see rotate()'s own
+  // comment above). Nothing about this action can be cancelled the way a
+  // stage/begin ceremony can (there is no session/csrf here to cancel), so
+  // this refusal only means the codes the market just minted server-side
+  // are never written to this vault -- it cannot undo the server-side
+  // generation itself.
+  if (!HANDLE_RE.test(generated.handle) || RESERVED_HANDLE_SUBSTRING_RE.test(generated.handle)) {
     throw new Error(
-      `the market already generated new recovery codes for "${generated.handle}", but the existing vault ` +
-      `entry could not be read back to merge them in: ${error.message}. Resolve the unreadable entry, ` +
-      'then re-run this command; it is safe to run again.',
+      `refusing to store the recovery codes the market minted under the handle "${generated.handle}": it ` +
+      `does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" ` +
+      'sequence this script uses for its own in-flight staging labels. The market already generated new ' +
+      'codes server-side for that handle -- this refusal only means they were never written to this vault.',
     )
   }
-  const location = storeSecret(origin, generated.handle, {
-    kind: 'merchant',
-    handle: generated.handle,
-    ...(previous.found && previous.value?.client_class ? { client_class: previous.value.client_class } : {}),
-    merchant_key: merchantKey,
-    recovery_codes: generated.recovery_codes,
-    origin,
-    stored_at: new Date().toISOString(),
+
+  // Same per-(origin, handle) lock promoteReplacementKey takes for
+  // register()/rotate()/recoverBegin() above (see promoteLockPath/
+  // withFileLock), and the same read-inside-the-lock discipline: without
+  // it, a concurrent rotation or recovery for this SAME handle could
+  // confirm and change the live entry's key WHILE this call's own network
+  // round trip to /api/recovery generate is still in flight. Naively
+  // writing back the `merchantKey` this call authenticated with -- read
+  // from the caller's flag/secret BEFORE that round trip, never re-checked
+  // after it -- would then silently REVERT the vault to a key the market
+  // has already revoked, while also storing the recovery codes this call
+  // just minted, which that other confirm already invalidated (the market
+  // invalidates every recovery code atomically on any such change). So the
+  // live entry is re-read INSIDE this lock, and its merchant_key -- not the
+  // pre-network `merchantKey` variable -- is compared against what this
+  // call actually authenticated with; a mismatch means exactly that race
+  // happened, and this refuses to write rather than guess which key is
+  // really live.
+  const lockPath = promoteLockPath(origin, generated.handle)
+  mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
+  const location = withFileLock(lockPath, () => {
+    // Write the fresh codes into the LIVE `handle` entry, not a sibling
+    // `${handle}-recovery` label: a caller resuming later (rotate, recover
+    // begin, key show) reads back the vault entry for `handle` and only
+    // that entry, so a set stored anywhere else is invisible to them and
+    // the live entry keeps claiming whatever (possibly invalidated) codes
+    // it already had. If the live entry cannot be read back, this refuses
+    // to guess at its other fields (client_class) rather than silently
+    // dropping them -- the market already holds the new codes as the only
+    // valid set regardless.
+    let previous
+    try {
+      previous = readSecret(origin, generated.handle)
+    } catch (error) {
+      throw new Error(
+        `the market already generated new recovery codes for "${generated.handle}", but the existing vault ` +
+        `entry could not be read back to merge them in: ${error.message}. Resolve the unreadable entry, ` +
+        'then re-run this command; it is safe to run again.',
+      )
+    }
+    if (previous.found && typeof previous.value?.merchant_key === 'string' && previous.value.merchant_key !== merchantKey) {
+      throw new Error(
+        `the market minted new recovery codes for "${generated.handle}", but the live vault entry's key ` +
+        'changed WHILE this call was in flight -- a concurrent rotation or recovery for this same handle ' +
+        'must have confirmed on this host at the same time. The just-minted codes are already invalidated by ' +
+        'that other confirm (the market invalidates every recovery code atomically on any such change), so ' +
+        'nothing was written here. The live vault entry was left exactly as that other, already-confirmed ' +
+        'change left it; run `recover generate` again now that the race is over.',
+      )
+    }
+    return storeSecret(origin, generated.handle, {
+      kind: 'merchant',
+      handle: generated.handle,
+      ...(previous.found && previous.value?.client_class ? { client_class: previous.value.client_class } : {}),
+      merchant_key: merchantKey,
+      recovery_codes: generated.recovery_codes,
+      origin,
+      stored_at: new Date().toISOString(),
+    })
   })
+  if (location === undefined) {
+    // withFileLock returns undefined, without ever running the critical
+    // section above, only when it could not acquire the lock within its
+    // own wait budget -- see promoteReplacementKey's own identical throw
+    // above for why silently returning here would be worse than the race
+    // this lock exists to close.
+    throw new Error(
+      `could not acquire the per-handle vault lock for "${generated.handle}" on this host within ` +
+      `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: another registration, rotation, or recovery for the same handle ` +
+      'appears to still be running concurrently on this host. The market already minted new recovery codes ' +
+      'for this handle server-side; nothing was written to this vault here. Retry once the other run finishes.',
+    )
+  }
   // Best-effort cleanup of the sibling-label location a prior version of
   // this command used to write to, so a stale duplicate never lingers.
   deleteSecret(origin, `${generated.handle}-recovery`)
@@ -1576,6 +1757,20 @@ async function recoverBegin(flags) {
   const staged = await postJson(origin, '/api/recovery', {
     action: 'begin', client_class: clientClass, recovery_code: recoveryCode,
   })
+
+  // Same validation, at the same point (before staged.handle is ever used
+  // as a vault label), and for the same reason as rotate() above -- see its
+  // own comment. Nothing has been written to this vault yet, so this simply
+  // cancels the recovery and refuses.
+  if (!HANDLE_RE.test(staged.handle) || RESERVED_HANDLE_SUBSTRING_RE.test(staged.handle)) {
+    await cancelStage(origin, '/api/recovery', staged.session, staged.csrf)
+    throw new Error(
+      `refusing to act on the handle "${staged.handle}" this recovery's begin call named: it does not match ` +
+      `the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" sequence this script ` +
+      'uses for its own in-flight staging labels. The recovery was cancelled before anything was written to ' +
+      'this vault; the OLD key is still the live, valid one.',
+    )
+  }
 
   // Same staging discipline as rotate() above, and for the same reason: the
   // old key still works until confirm below actually succeeds, so the live
@@ -1675,5 +1870,5 @@ if (isMainModule) {
 // uses this import path itself, so importing this module never runs main().
 export {
   storeSecret, readSecret, deleteSecret, listVaultLabels, promoteReplacementKey, SecretReadFailure, shouldReveal,
-  HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE,
+  HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE, isValidModel, parseKeychainServiceNames,
 }
