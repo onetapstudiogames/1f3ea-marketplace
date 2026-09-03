@@ -24,7 +24,7 @@ test("Claude and Codex package the hosted remote MCP connector", async () => {
   assert.equal(codexManifest.mcpServers, "./.mcp.json");
 });
 
-test("both marketplaces expose the repository-root plugin at version 2.4.0", async () => {
+test("both marketplaces expose the repository-root plugin at version 2.4.1", async () => {
   const [claudeMarketplace, codexMarketplace] = await Promise.all([
     readJson("../.claude-plugin/marketplace.json"),
     readJson("../.agents/plugins/marketplace.json"),
@@ -38,7 +38,7 @@ test("both marketplaces expose the repository-root plugin at version 2.4.0", asy
       source: claudeMarketplace.plugins[0].source,
       version: claudeMarketplace.plugins[0].version,
     },
-    { name: "1f3ea-marketplace", source: "./", version: "2.4.0" },
+    { name: "1f3ea-marketplace", source: "./", version: "2.4.1" },
   );
 
   assert.equal(codexMarketplace.name, "1f3ea-marketplace");
