@@ -146,6 +146,94 @@ test("reviewed live claims agree across official JSON and llms.txt", () => {
   );
 });
 
+// The coding-client identity doors (scripts/setup.mjs, connect.mjs, key.mjs,
+// identity-client.mjs all depend on this exact shape) are gated separately
+// from the plain identity flags and can legitimately be null while dormant
+// -- so this pins the shape ONLY for the case where /api/official actually
+// reports the doors present, matching validateLiveTruth's own "only check
+// when present" discipline. Without a test pinning this, a server-side
+// rename of any one of these fields would silently turn setup.mjs's
+// dormant-doors pre-check into a permanent no-op with a fully green suite
+// and a green check:live-truth -- the same blind-coverage class the rest of
+// this file already closes for every other live claim.
+test("live truth pins the identity.coding_client_doors shape whenever /api/official reports it present", () => {
+  const domain = reviewedOfficialFacts.domain;
+  const reviewedCodingDoors = {
+    register: `${domain}/api/register`,
+    rotate: `${domain}/api/rotate`,
+    recovery: `${domain}/api/recovery`,
+    pair: `${domain}/api/pair`,
+    client_classes: ["coding_persistent", "coding_ephemeral"],
+    registration_requires_human_approved: true,
+    key_and_codes_shown_exactly_once: true,
+  };
+
+  // Dormant (null) doors are not evidence of drift -- never checked, never
+  // thrown on, regardless of what the shape would otherwise require.
+  assert.doesNotThrow(() =>
+    validateLiveTruth({
+      official: { ...reviewedOfficialFacts, identity: { coding_client_doors: null } },
+      llmsText: reviewedLlmsClaims,
+    }),
+  );
+
+  // The reviewed shape, present, must pass cleanly.
+  assert.doesNotThrow(() =>
+    validateLiveTruth({
+      official: { ...reviewedOfficialFacts, identity: { coding_client_doors: reviewedCodingDoors } },
+      llmsText: reviewedLlmsClaims,
+    }),
+  );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: {
+          ...reviewedOfficialFacts,
+          identity: { coding_client_doors: { ...reviewedCodingDoors, register: `${domain}/api/register-v2` } },
+        },
+        llmsText: reviewedLlmsClaims,
+      }),
+    /coding_client_doors\.register changed/iu,
+  );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: {
+          ...reviewedOfficialFacts,
+          identity: { coding_client_doors: { ...reviewedCodingDoors, client_classes: ["coding_persistent"] } },
+        },
+        llmsText: reviewedLlmsClaims,
+      }),
+    /coding_client_doors\.client_classes changed/iu,
+  );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: {
+          ...reviewedOfficialFacts,
+          identity: { coding_client_doors: { ...reviewedCodingDoors, registration_requires_human_approved: false } },
+        },
+        llmsText: reviewedLlmsClaims,
+      }),
+    /registration_requires_human_approved changed/iu,
+  );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: {
+          ...reviewedOfficialFacts,
+          identity: { coding_client_doors: { ...reviewedCodingDoors, key_and_codes_shown_exactly_once: false } },
+        },
+        llmsText: reviewedLlmsClaims,
+      }),
+    /key_and_codes_shown_exactly_once changed/iu,
+  );
+});
+
 test("offline live checks skip honestly only outside required-network CI", async () => {
   const offlineFetch = async () => {
     throw new TypeError("fetch failed");
