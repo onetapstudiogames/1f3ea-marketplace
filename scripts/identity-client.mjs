@@ -1185,6 +1185,19 @@ function isStagingLabel(label, indexMap) {
  * "--pending-" going forward, so a live merchant's label can no longer
  * collide with this shape (see isPendingLabel's own doc comment for the
  * same reasoning, applied to the broader staging check).
+ *
+ * The AND above is ordered deliberately: isStagingLabel is evaluated FIRST,
+ * and it consults `indexMap`'s own `staging` marker before ever falling
+ * back to a suffix guess (see its own doc comment) -- so a real merchant
+ * handle that happens to match the `--pending-registration-<hex>` suffix
+ * shape (HANDLE_RE permits up to 32 characters, long enough to collide by
+ * coincidence, e.g. "abc--pending-registration-a") is never misclassified
+ * here: the index's `staging: false` short-circuits the `&&` to false
+ * before the suffix regex on the right ever matters, regardless of whether
+ * the text happens to match it. The suffix regex on its own is authoritative
+ * only where the index is silent about a label (no entry, or an entry with
+ * no boolean `staging`) -- never used to override what the index already
+ * knows.
  */
 function isRegistrationStagingLabel(label, indexMap) {
   return isStagingLabel(label, indexMap) && /--pending-registration-[0-9a-f]+$/u.test(label)
@@ -1625,9 +1638,10 @@ async function register(flags) {
       `registration: it does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved ` +
       '"--pending-" sequence this script uses for its own in-flight staging labels. The merchant was already ' +
       'created server-side under that exact spelling, and its confirmed merchant key and recovery codes were ' +
-      `NOT lost -- they are still stored under the staging label "${stagingLabel}" and nowhere else. Read ` +
-      `them back from "${stagingLabel}" and store them under a label of your choosing yourself; this script ` +
-      'will not do so automatically for a handle that fails its own naming rule.',
+      `NOT lost -- they are still stored under the staging label "${stagingLabel}" and nowhere else. This ` +
+      'script will not store them automatically for a handle that fails its own naming rule; `key show ' +
+      `--handle ${stagingLabel} --reveal\` reads them back by hand, and \`key adopt\` has no use here since ` +
+      'it also refuses a handle that fails this same rule -- whatever label you choose must satisfy it too.',
     )
   }
 

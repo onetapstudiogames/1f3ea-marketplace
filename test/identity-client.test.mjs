@@ -668,6 +668,52 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
     }
   })
 
+  // isRegistrationStagingLabel must consult the index BEFORE the
+  // `--pending-registration-<hex>` suffix test, matching isStagingLabel's
+  // own precedence -- a label the index positively marks `staging: false`
+  // is real merchant metadata even when its shape also matches the suffix
+  // pendingLabel('registration') mints (HANDLE_RE permits handles up to 32
+  // characters, long enough to collide by coincidence).
+  test(
+    `listVaultLabels (${backendPlatform}): a real merchant whose handle matches the registration-staging ` +
+    'suffix shape is still listed, and never surfaced as registrationStagingLabels',
+    { skip },
+    async () => {
+      const origin = 'https://example.invalid'
+      const homeDir = await mkdtemp(join(tmpdir(), `identity-client-staging-${backendPlatform}-`))
+      const deps = { platform: backendPlatform, homeDir, execFileSync: () => '' }
+      // Matches BOTH HANDLE_RE (max 32 chars) and the registration-staging
+      // suffix shape (`--pending-registration-<hex>`), the exact coincidence
+      // this precedence test exists to cover.
+      const handle = 'abc--pending-registration-a'
+      try {
+        storeSecret(origin, handle, {
+          kind: 'merchant',
+          handle,
+          client_class: 'coding_persistent',
+          merchant_key: `1f3ea_sk_${'c'.repeat(48)}`,
+          origin,
+        }, deps)
+
+        const labels = listVaultLabels(origin, deps)
+        assert.deepEqual(
+          labels,
+          [handle],
+          'a real merchant is never dropped just because its handle also matches the registration-staging suffix shape',
+        )
+        assert.deepEqual(
+          labels.registrationStagingLabels,
+          undefined,
+          'the index\'s staging:false marker wins over the suffix shape -- this is never surfaced as an ' +
+          'abandoned registration staging label',
+        )
+      } finally {
+        deleteSecret(origin, handle, deps)
+        await rm(homeDir, { recursive: true, force: true })
+      }
+    },
+  )
+
   test(`listVaultLabels (${backendPlatform}): a genuine staging entry is never listed`, { skip }, async () => {
     const origin = 'https://example.invalid'
     const homeDir = await mkdtemp(join(tmpdir(), `identity-client-staging-${backendPlatform}-`))
