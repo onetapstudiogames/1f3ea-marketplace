@@ -41,6 +41,18 @@
 - Taught `scripts/check-live-truth.mjs` to check the served llms.txt recovery-code count and the
   live `/api/official` `identity.coding_client_doors` shape, so a real door or recovery-code
   change fails CI instead of drifting silently.
+- Added `key adopt --handle <handle> --from-label <staging-label>`, to recover a merchant key
+  stranded under a registration staging label when a past run's server-side confirm succeeded but
+  its local vault promotion failed. It probes `GET /api/me` with the staged key, refuses unless
+  that probe authenticates as `--handle` exactly, and only then promotes it to the real label and
+  deletes the staging copy. `setup`'s own registration-staging refusal points at it.
+- **Corrected 2026-09-03:** the "a merchant key never touches ... travels only ... or as the one
+  `merchant_key` field" bullet above omitted the recovery code's own body-field transport: a
+  recovery code travels as the `recovery_code` field inside a request to `/api/recovery` (begin),
+  the same way a merchant key travels as `merchant_key` to `/api/register` (confirm), `/api/rotate`
+  (begin), and `/api/recovery` (generate) — an incomplete enumeration presented as complete. Every
+  one of these calls, like every other network call this skill makes, travels only over `https`
+  with redirects refused.
 
 ## [2.3.0] - 2026-09-02
 
