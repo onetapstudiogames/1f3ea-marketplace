@@ -162,9 +162,8 @@ async function verifyStoredKey(handle) {
   }
   return {
     keyWorks: true,
-    note: `me read succeeded (handle: ${probe.handle ?? handle}); this GET /api/me read wakes due timers ` +
-      'and advances the fee-credit last-read marker, same as any other `me` read -- it is the one call ' +
-      'here that genuinely needs the handle it returns, to catch a mismatched vault label',
+    note: `me read succeeded (handle: ${probe.handle ?? handle}) -- it is the one call here that genuinely ` +
+      'needs the handle it returns, to catch a mismatched vault label',
   }
 }
 
@@ -212,9 +211,7 @@ function printConnectStep(handle) {
   say('  that one is separate from the key-based connector above and needs no key.)')
   say('')
   say(`Then run: node "${resolve(pluginRoot, 'scripts', 'connect.mjs')}" --origin ${origin}`)
-  say('to run one authenticated read (GET /api/me) proving the connection actually works -- this also')
-  say('wakes any due timers and advances this merchant\'s fee-credit last-read marker, the same as any')
-  say('other `me` read; it is not free of side effects, just proof the key still works.')
+  say('to run one authenticated read (GET /api/me) proving the connection actually works.')
   say('')
 }
 
@@ -250,6 +247,12 @@ function printWalletStep() {
 async function report(handle, precomputedKeyCheck) {
   say('=== Verification report ===')
   const keyCheck = precomputedKeyCheck ?? await verifyStoredKeyOrRefuse(handle, 'setup')
+  // A failed or mismatched read here means the one thing this whole pass
+  // exists to verify -- that the stored key actually works -- did not hold.
+  // Printing the report is still useful (it names exactly what failed), but
+  // exiting 0 anyway would tell a caller that branches on exit status this
+  // run succeeded when the connection it verified does not actually work.
+  if (!keyCheck.keyWorks) process.exitCode = 1
   say(`- public market handle: ${handle}`)
   say(`- secret reference works: ${keyCheck.keyWorks ? 'yes' : 'no'} (${keyCheck.note})`)
   say(`- wallet mode: ${flags.wallet === true ? 'requested (see references/wallet.md before funding it)' : 'disabled (default)'}`)
@@ -270,6 +273,39 @@ function finishAsRepair(handle, clientClass, precomputedKeyCheck) {
 if (existing?.handle) {
   say(`Existing setup found for ${origin}: handle "${existing.handle}". Repairing/updating it — never`)
   say('creating a second identity.')
+  // A caller-supplied --handle/--client-class that names something OTHER
+  // than what is already on record here would otherwise be silently
+  // ignored -- this branch always repairs the EXISTING identity, never
+  // switches to a different one -- so name exactly which flags were ignored
+  // and why, rather than acting on them with no acknowledgment at all.
+  // --new-identity in this branch would ALSO be silently ignored the same
+  // way (this repair path never registers), so it is refused outright
+  // instead, telling the caller what actually clears the existing state.
+  const ignoredHandle = typeof flags.handle === 'string' && flags.handle !== existing.handle ? flags.handle : null
+  const ignoredClientClass =
+    typeof flags['client-class'] === 'string' && flags['client-class'] !== existing.client_class
+      ? flags['client-class']
+      : null
+  if (flags['new-identity'] === true) {
+    console.error(
+      `setup: --new-identity was passed, but ${origin} already has a recorded setup (handle ` +
+      `"${existing.handle}"), so this run took the repair path, which never registers a new identity and ` +
+      'so cannot act on --new-identity. To register a genuinely different merchant, remove or rename this ' +
+      'origin\'s entry from ~/.1f3ea/setup-state.json first, then re-run with --handle/--client-class.',
+    )
+    process.exitCode = 1
+    process.exit()
+  }
+  if (ignoredHandle || ignoredClientClass) {
+    say(
+      `Note: this repair pass ignored ${[
+        ignoredHandle && `--handle ${ignoredHandle}`,
+        ignoredClientClass && `--client-class ${ignoredClientClass}`,
+      ].filter(Boolean).join(' and ')} -- an existing setup for ${origin} already names handle ` +
+      `"${existing.handle}"${existing.client_class ? ` (client class: ${existing.client_class})` : ''}, and a ` +
+      'repair pass always updates that same identity rather than switching to a different one.',
+    )
+  }
   say('')
   await finishAsRepair(existing.handle, existing.client_class)
   console.log(lines.join('\n'))
@@ -301,6 +337,18 @@ if (!HANDLE_RE.test(handle)) {
     'letters, digits, and hyphens, 3-32 characters, must start with a letter or digit). Choose a handle ' +
     'that already matches this rule, then re-run.',
   )
+  process.exitCode = 1
+  process.exit()
+}
+
+// Same discipline as the handle check just above, applied to the other
+// value the approval question names: checked locally, before any approval
+// step or network call, so a human is never asked to approve a client class
+// the market cannot accept -- and an approval nonce is never spent on a
+// registration that was always going to fail identity-client.mjs's own
+// --client-class validation at Step 2.
+if (clientClass !== 'coding_persistent' && clientClass !== 'coding_ephemeral') {
+  console.error('setup: --client-class must be coding_persistent or coding_ephemeral.')
   process.exitCode = 1
   process.exit()
 }
@@ -348,9 +396,9 @@ if (priorVaultEntry.keyWorks && newIdentity) {
 // session that then chooses a different handle would otherwise register a
 // second, permanent, unrecoverable merchant right next to the first one.
 // Enumerate every OTHER label this vault already holds for this origin
-// (never the handle just checked above, and never a rotation/recovery
-// staging label, which is not a real registered identity) and refuse
-// outright unless --new-identity was passed.
+// (never the handle just checked above, and never a registration/rotation/
+// recovery staging label, which is not a real registered identity) and
+// refuse outright unless --new-identity was passed.
 if (!newIdentity) {
   const otherLabels = listVaultLabels(origin).filter(label => label !== handle)
   if (otherLabels.length > 0) {
@@ -537,7 +585,13 @@ const registerArgs = [
   '--client-class', clientClass,
   '--human-approved',
 ]
-if (typeof flags.model === 'string') registerArgs.push('--model', flags.model)
+// Always pass --model, even when the caller omitted it: identity-client.mjs
+// register() sends the model field to the market UNCONDITIONALLY (an empty
+// string when no label is given), because the market's own validator
+// requires the field to be PRESENT ("" is accepted, an absent key is not).
+// Passing '' explicitly here keeps that contract visible at this call site
+// too, rather than relying on identity-client.mjs's own internal default.
+registerArgs.push('--model', typeof flags.model === 'string' ? flags.model : '')
 if (allowOrigin) registerArgs.push('--allow-origin', allowOrigin)
 
 // The identity of record from here on is whatever the market actually
@@ -549,6 +603,51 @@ if (allowOrigin) registerArgs.push('--allow-origin', allowOrigin)
 // happens only under --reveal (the child's stdout goes straight to the real
 // terminal, uncaptured, in that one case).
 let registeredHandle = handle
+
+/**
+ * Only reached from the --reveal branch below, where the child's own
+ * `handle: <confirmed>` stdout line went straight to the real terminal via
+ * `stdio: 'inherit'` and so cannot be parsed back out the way the non-
+ * reveal branch does. Assuming the requested spelling was what the market
+ * actually confirmed would silently persist the WRONG handle into
+ * setup-state.json while the vault entry sits under the confirmed one --
+ * every later `connect`/`key status`/`key rotate` would then report "no
+ * vault entry found". Re-derives it with real lookups instead: try the
+ * requested spelling first (the common case, no normalization), then fall
+ * back to scanning every other label this vault now holds for one written
+ * at or after `startedAt` that self-authenticates (a real registration
+ * writes the confirmed key to a vault entry labelled with the confirmed
+ * handle, and that entry's `me` read returns that same handle).
+ */
+async function deriveConfirmedHandleAfterReveal(requestedHandle, startedAt) {
+  try {
+    const requestedCheck = await verifyStoredKey(requestedHandle)
+    if (requestedCheck.keyWorks) return requestedHandle
+  } catch {
+    // Unreadable is not evidence either way here -- fall through to the scan below.
+  }
+  for (const label of listVaultLabels(origin)) {
+    if (label === requestedHandle) continue
+    let stored
+    try {
+      stored = readSecret(origin, label)
+    } catch {
+      continue
+    }
+    if (!stored.found || typeof stored.value?.stored_at !== 'string' || stored.value.stored_at < startedAt) continue
+    if (typeof stored.value?.merchant_key !== 'string') continue
+    const probe = await probeMe(origin, stored.value.merchant_key, { allowOrigin })
+    if (probe.ok && probe.handle === label) return label
+  }
+  console.error(
+    `setup: --reveal registered "${requestedHandle}" (or a market-normalized spelling of it), but its own ` +
+    'confirmed handle line went straight to the terminal, uncaptured, and this pass could not re-derive it ' +
+    `from the vault either. Run a plain repair pass (\`setup --origin ${origin}\`, no flags) once you know the ` +
+    'confirmed handle from the terminal output above, passing --handle <that handle> if it differs from ' +
+    `"${requestedHandle}", so setup-state.json records it correctly.`,
+  )
+  return requestedHandle
+}
 
 let registerResult
 if (flags.reveal === true) {
@@ -571,7 +670,9 @@ if (flags.reveal === true) {
   }
   console.log(lines.join('\n'))
   lines.length = 0
+  const startedAt = new Date().toISOString()
   registerResult = spawnSync(process.execPath, [...registerArgs, '--reveal'], { stdio: 'inherit' })
+  if (registerResult.status === 0) registeredHandle = await deriveConfirmedHandleAfterReveal(handle, startedAt)
 } else {
   registerResult = spawnSync(process.execPath, registerArgs, { stdio: ['inherit', 'pipe', 'pipe'], encoding: 'utf8' })
   say((registerResult.stdout || '').trimEnd())
