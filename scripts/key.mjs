@@ -154,6 +154,7 @@ async function status() {
   console.log(`handle: ${handle}`)
   if (!probe.ok) {
     console.log(`stored key: does not work (${probe.error})`)
+    process.exitCode = 1
     return
   }
   if (probe.handle && probe.handle !== handle) {
@@ -161,10 +162,10 @@ async function status() {
       `stored key: works, but authenticates as "${probe.handle}", not "${handle}" -- the vault entry ` +
       `labelled "${handle}" belongs to a different merchant. Pass --handle ${probe.handle} instead, or fix the entry.`,
     )
+    process.exitCode = 1
     return
   }
-  console.log('stored key: works (one me read succeeded) — this read wakes any due timers and advances')
-  console.log('this merchant\'s fee-credit last-read marker, the same as any other `me` read.')
+  console.log('stored key: works (one me read succeeded).')
 }
 
 /**
@@ -219,9 +220,51 @@ function recoverGenerate() {
   if (!handle) return
   const merchantKey = requireStoredKey(handle)
   if (!merchantKey) return
-  const args = [identityClientPath, 'recover', 'generate', '--origin', origin, '--merchant-key-file', '-']
+  // The market's own /api/recovery `generate` action requires client_class
+  // too (see identity-client.mjs's recoverGenerate comment) -- default it
+  // from the same stored vault entry requireStoredKey above already found,
+  // same as rotate() does.
+  const clientClass = requireStoredClientClass(handle)
+  if (!clientClass) return
+  const args = [
+    identityClientPath, 'recover', 'generate', '--origin', origin, '--client-class', clientClass, '--merchant-key-file', '-',
+  ]
   if (allowOrigin) args.push('--allow-origin', allowOrigin)
   runIdentityClient('key recover generate', args, merchantKey)
+}
+
+/**
+ * Unlike requireStoredClientClass above (used by rotate/recover generate,
+ * both of which already have the current merchant key in hand and so
+ * already know the handle), recovery begin is the path an agent reaches
+ * only when its key -- and often the vault entry storing it -- is already
+ * lost, so a stored client_class is often exactly what cannot be read back.
+ * Tries the stored entry for a known handle first; falls back to requiring
+ * --client-class explicitly rather than guessing.
+ */
+function resolveClientClassForRecoveryBegin() {
+  if (typeof flags['client-class'] === 'string') return flags['client-class']
+  let handle = null
+  try {
+    handle = resolveHandle()
+  } catch {
+    handle = null
+  }
+  if (handle) {
+    let stored
+    try {
+      stored = readSecret(origin, handle)
+    } catch {
+      stored = { found: false }
+    }
+    if (stored.found && typeof stored.value?.client_class === 'string') return stored.value.client_class
+  }
+  console.error(
+    'key recover begin: no client_class known -- pass --client-class coding_persistent|coding_ephemeral ' +
+    'explicitly (the vault entry for a lost key is often exactly what cannot be read back).',
+  )
+  process.exitCode = 1
+  return null
 }
 
 function recoverBegin() {
@@ -231,7 +274,12 @@ function recoverBegin() {
     process.exitCode = 1
     return
   }
-  const args = [identityClientPath, 'recover', 'begin', '--origin', origin, '--recovery-code-file', codeSource]
+  const clientClass = resolveClientClassForRecoveryBegin()
+  if (!clientClass) return
+  const args = [
+    identityClientPath, 'recover', 'begin', '--origin', origin, '--client-class', clientClass,
+    '--recovery-code-file', codeSource,
+  ]
   if (allowOrigin) args.push('--allow-origin', allowOrigin)
   if (flags.reveal === true) args.push('--reveal')
   const result = spawnSync(process.execPath, args, { stdio: 'inherit' })
