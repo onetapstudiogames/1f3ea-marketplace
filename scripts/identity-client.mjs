@@ -637,6 +637,56 @@ function writeMacKeychainCredential(execImpl, service, account, base64Blob) {
 }
 
 /**
+ * Undoes `security dump-keychain`'s own escaping of ONE already-unquoted
+ * attribute value (the capture group of the quoted-string regex below,
+ * never including the surrounding `"..."` themselves): `\"` for an embedded
+ * quote, `\\` for a literal backslash, and any other non-printable byte as
+ * a 3-digit OCTAL escape -- per BYTE, not per character. A multi-byte UTF-8
+ * character (anything outside ASCII) is therefore printed as a separate
+ * `\NNN` escape for each of its bytes, e.g. "é" (U+00E9, UTF-8 C3 A9) as
+ * `\303\251` -- decoding each escape with String.fromCharCode (a UTF-16
+ * code UNIT, not a byte) would turn that into two mojibake characters
+ * (U+00C3, U+00A9) instead of recombining the two bytes into one UTF-8
+ * character. This decodes every escape into a raw byte first (an
+ * unescaped, already-printable-ASCII literal character is always exactly
+ * one byte -- everything else is what `security` itself always escapes)
+ * and only turns the whole byte sequence into a string, as UTF-8, once, at
+ * the very end.
+ */
+function unescapeSecurityDumpString(quoted) {
+  const bytes = []
+  let i = 0
+  while (i < quoted.length) {
+    const ch = quoted[i]
+    if (ch === '\\') {
+      const octal = /^[0-7]{3}/u.exec(quoted.slice(i + 1, i + 4))
+      if (octal) {
+        bytes.push(parseInt(octal[0], 8) & 0xff)
+        i += 4
+        continue
+      }
+      const next = quoted[i + 1]
+      if (next === '"' || next === '\\') {
+        bytes.push(next.charCodeAt(0))
+        i += 2
+        continue
+      }
+      // Not an escape form `security` itself ever emits (per the doc
+      // comment above) -- keep the backslash literally rather than
+      // silently eating a character that turns out not to start one.
+      bytes.push(0x5c)
+      i += 1
+      continue
+    }
+    // `security` only ever leaves a printable-ASCII byte unescaped, so a
+    // literal character here is always exactly one byte.
+    bytes.push(ch.charCodeAt(0) & 0xff)
+    i += 1
+  }
+  return Buffer.from(bytes).toString('utf8')
+}
+
+/**
  * Parses `security dump-keychain`'s own metadata-only listing (never `-d`,
  * which would ALSO dump every item's secret data) into the "svce" (service)
  * attribute value of every generic-password item it printed. Real output
@@ -655,14 +705,18 @@ function writeMacKeychainCredential(execImpl, service, account, base64Blob) {
  *       "tomb"<sint32>=0x00000000
  *       "type"<uint32>=<NULL>
  *
- * -- the `"svce"<blob>="..."` line is the one this reads; `security` itself
- * escapes an embedded `"` in that quoted value as `\"` and any other
- * non-printable byte as a 3-digit octal `\NNN` escape, both undone here. A
- * line whose value is `<NULL>` (no service name at all) is skipped. This
- * repo's own darwin backend cannot run on a non-macOS CI runner, so this
- * parser is pinned in test/identity-client.test.mjs against a captured,
- * documented sample of real `security dump-keychain` output, never against
- * a live `security` binary.
+ * -- the `"svce"<blob>="..."` line is the one this reads, undone by
+ * unescapeSecurityDumpString above. `security` also has a SECOND form for a
+ * value that needs escaping, printing the raw bytes as hex ahead of the
+ * same escaped-quoted rendering: `"svce"<blob>=0x<HEX>  "escaped"` -- the
+ * quoted-string match below tolerates an optional `0x<hex>` prefix so that
+ * form is read too (the hex itself is redundant with the quoted form once
+ * unescaped, so this only ever reads the quoted half). A line whose value
+ * is `<NULL>` (no service name at all) is skipped. This repo's own darwin
+ * backend cannot run on a non-macOS CI runner, so this parser is pinned in
+ * test/identity-client.test.mjs against a captured, documented sample of
+ * real `security dump-keychain` output, never against a live `security`
+ * binary.
  */
 function parseKeychainServiceNames(dumpOutput) {
   const services = []
@@ -671,13 +725,9 @@ function parseKeychainServiceNames(dumpOutput) {
   while ((match = serviceLineRe.exec(dumpOutput)) !== null) {
     const raw = match[1].trim()
     if (raw === '<NULL>') continue
-    const quoted = /^"((?:\\.|[^"\\])*)"/u.exec(raw)
+    const quoted = /^(?:0x[0-9A-Fa-f]+\s+)?"((?:\\.|[^"\\])*)"/u.exec(raw)
     if (!quoted) continue
-    const unescaped = quoted[1]
-      .replace(/\\([0-7]{3})/gu, (_wholeMatch, octal) => String.fromCharCode(parseInt(octal, 8)))
-      .replace(/\\"/gu, '"')
-      .replace(/\\\\/gu, '\\')
-    services.push(unescaped)
+    services.push(unescapeSecurityDumpString(quoted[1]))
   }
   return services
 }
@@ -1184,17 +1234,40 @@ function listVaultLabels(origin, deps = {}) {
     // right next to one that already exists.
     const prefix = vaultTarget(origin, '')
     const fromKeychain = []
+    // A normal developer login Keychain (Safari, wifi, certificate, and app
+    // tokens) can print well past Node's 1 MiB execFileSync default, which
+    // throws ENOBUFS -- and a bare catch below could not tell that apart
+    // from "no `security` binary on PATH", so an incomplete dump silently
+    // read as "found nothing", reopening the exact fail-open this union
+    // exists to close. maxBuffer/timeout give a large dump room to finish;
+    // when it still cannot, `incomplete` is set so the caller below can
+    // return that signal rather than an empty result.
+    let incomplete = false
     try {
-      const output = execImpl('security', ['dump-keychain'], { encoding: 'utf8' })
+      const output = execImpl('security', ['dump-keychain'], {
+        encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 10_000,
+      })
       for (const service of parseKeychainServiceNames(output)) {
         if (service.startsWith(prefix)) fromKeychain.push(service.slice(prefix.length))
       }
-    } catch {
-      // `security dump-keychain` unavailable or failed -- fall through to
-      // the index alone below, same as win32's cmdkey fallback above.
+    } catch (error) {
+      // ENOBUFS (dump exceeded maxBuffer) and ETIMEDOUT (dump exceeded
+      // timeout) mean the dump STARTED but did not finish -- the
+      // enumeration is incomplete, not empty. Anything else (ENOENT: no
+      // `security` binary on PATH; a genuine dump-keychain failure) really
+      // does mean nothing was found, and falls through to the index alone
+      // below, same as win32's cmdkey fallback above.
+      if (error?.code === 'ENOBUFS' || error?.code === 'ETIMEDOUT') incomplete = true
     }
     const labels = new Set([...fromKeychain, ...indexMap.keys()])
-    return [...labels].filter(label => !isStagingLabel(label, indexMap))
+    const result = [...labels].filter(label => !isStagingLabel(label, indexMap))
+    if (incomplete) {
+      // Non-enumerable so existing callers that treat this as a plain
+      // array of labels (assert.deepEqual included) see no difference;
+      // setup.mjs's duplicate-identity guard checks this flag explicitly.
+      Object.defineProperty(result, 'incomplete', { value: true, enumerable: false })
+    }
+    return result
   }
   const dir = join(deps.homeDir ?? homedir(), '.1f3ea', 'credentials')
   const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
@@ -1928,5 +2001,5 @@ if (isMainModule) {
 // uses this import path itself, so importing this module never runs main().
 export {
   storeSecret, readSecret, deleteSecret, listVaultLabels, promoteReplacementKey, SecretReadFailure, shouldReveal,
-  HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE, isValidModel, parseKeychainServiceNames,
+  HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE, isValidModel, parseKeychainServiceNames, unescapeSecurityDumpString,
 }

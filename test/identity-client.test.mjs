@@ -17,6 +17,7 @@ import {
   SecretReadFailure,
   shouldReveal,
   storeSecret,
+  unescapeSecurityDumpString,
 } from '../scripts/identity-client.mjs'
 import { assertAllowedOrigin } from '../scripts/lib/origin-guard.mjs'
 import { probeMe } from '../scripts/lib/identity-probe.mjs'
@@ -936,16 +937,62 @@ const SAMPLE_DUMP_KEYCHAIN_OUTPUT = [
   '    "tomb"<sint32>=0x00000000 ',
   '    "type"<uint32>=<NULL>',
   '',
+  'keychain: "/Users/agent/Library/Keychains/login.keychain-db"',
+  'version: 512',
+  'class: "genp"',
+  'attributes:',
+  '    "acct"<blob>="utf8-account"',
+  // Round-6 review, LOW finding: `security` escapes a multi-byte UTF-8
+  // character per BYTE, not per character -- "café" (the last character is
+  // U+00E9, UTF-8 bytes 0xC3 0xA9) prints its final byte pair as TWO octal
+  // escapes, \303 (0xC3) and \251 (0xA9), never one. Decoding each escape
+  // independently with String.fromCharCode (a UTF-16 code unit) would yield
+  // "cafÃ©" (U+00C3, U+00A9) instead of the real "café".
+  String.raw`    "svce"<blob>="1f3ea:https://1f3ea.com:caf\303\251"`,
+  '    "sync"<sint32>=0x00000000 ',
+  '    "tomb"<sint32>=0x00000000 ',
+  '    "type"<uint32>=<NULL>',
+  '',
+  'keychain: "/Users/agent/Library/Keychains/login.keychain-db"',
+  'version: 512',
+  'class: "genp"',
+  'attributes:',
+  '    "acct"<blob>="hexform-account"',
+  // Round-6 review, LOW finding: for a value needing escaping, `security`
+  // ALSO prints a `0x<HEX>` rendering ahead of the same escaped-quoted
+  // string on the same line -- `"svce"<blob>=0x<hex>  "escaped"` -- which
+  // the old `^"..."` -only match required `=\"` immediately and so simply
+  // never matched, silently dropping the entry from the enumeration. The
+  // hex below is the real UTF-8 bytes of "1f3ea:https://1f3ea.com:hexform".
+  '    "svce"<blob>=0x31663365613a68747470733a2f2f31663365612e636f6d3a686578666f726d  "1f3ea:https://1f3ea.com:hexform"',
+  '    "sync"<sint32>=0x00000000 ',
+  '    "tomb"<sint32>=0x00000000 ',
+  '    "type"<uint32>=<NULL>',
+  '',
 ].join('\n')
 
-test('parseKeychainServiceNames: reads every "svce" attribute from a captured real dump-keychain sample, skips <NULL>, and unescapes a backslash-quote correctly', () => {
+test('parseKeychainServiceNames: reads every "svce" attribute from a captured real dump-keychain sample, skips <NULL>, unescapes a backslash-quote correctly, decodes a multi-byte UTF-8 octal escape as bytes (not UTF-16 code units), and reads the `0x<hex> "..."` form', () => {
   const services = parseKeychainServiceNames(SAMPLE_DUMP_KEYCHAIN_OUTPUT)
   assert.deepEqual(services, [
     '1f3ea:https://1f3ea.com:alice',
     'AIM',
     '1f3ea:https://1f3ea.com:bob--pending-rotation',
     '1f3ea:https://1f3ea.com:has"quote',
+    '1f3ea:https://1f3ea.com:café',
+    '1f3ea:https://1f3ea.com:hexform',
   ])
+})
+
+test('unescapeSecurityDumpString: decodes a per-byte octal-escaped multi-byte UTF-8 character correctly, not as UTF-16 code units', () => {
+  assert.equal(unescapeSecurityDumpString(String.raw`caf\303\251`), 'café')
+  // A three-byte character too: "€" is U+20AC, UTF-8 E2 82 AC.
+  assert.equal(unescapeSecurityDumpString(String.raw`\342\202\254`), '€')
+})
+
+test('unescapeSecurityDumpString: still handles a plain ASCII value, an embedded escaped quote, and an escaped backslash', () => {
+  assert.equal(unescapeSecurityDumpString('plain-ascii'), 'plain-ascii')
+  assert.equal(unescapeSecurityDumpString(String.raw`has\"quote`), 'has"quote')
+  assert.equal(unescapeSecurityDumpString(String.raw`back\\slash`), 'back\\slash')
 })
 
 test('parseKeychainServiceNames: empty or unrelated output yields no services', () => {
@@ -1002,6 +1049,110 @@ test('listVaultLabels (darwin): a failed dump-keychain call falls back to the in
     }
 
     assert.deepEqual(listVaultLabels(origin, deps), ['indexed-merchant'])
+  } finally {
+    await rm(homeDir, { recursive: true, force: true })
+  }
+})
+
+// --- Round-6 review, MEDIUM finding: an ENOBUFS/ETIMEDOUT dump-keychain ---
+// call is an INCOMPLETE enumeration, not an empty one -- a bare catch could
+// not tell that apart from "no `security` binary on PATH" (ENOENT), so a
+// large login Keychain (a few thousand Safari/wifi/certificate/app-token
+// items, easily past Node's 1 MiB execFileSync default) silently answered
+// "found nothing" and let setup.mjs's duplicate-identity guard fail open.
+// Fixed by passing an explicit maxBuffer/timeout and marking the result
+// `incomplete` (a non-enumerable property, invisible to the plain-array
+// assertions above) whenever the dump throws ENOBUFS or ETIMEDOUT, so
+// setup.mjs's guard can refuse instead of reading an empty result as safe.
+
+test('listVaultLabels (darwin): an ENOBUFS from a truncated dump-keychain call is marked incomplete, not read as empty', async () => {
+  const origin = 'https://1f3ea.com'
+  const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-darwin-keychain-enobufs-'))
+  try {
+    // No vault-index.json at all -- exactly "state lost, vault intact":
+    // the scenario the whole union exists to protect.
+    const deps = {
+      platform: 'darwin',
+      homeDir,
+      execFileSync: () => {
+        const error = new Error('spawnSync security ENOBUFS')
+        error.code = 'ENOBUFS'
+        throw error
+      },
+    }
+
+    const labels = listVaultLabels(origin, deps)
+    assert.deepEqual(labels, [], 'nothing was actually enumerated, so the label list itself stays empty')
+    assert.equal(labels.incomplete, true, 'the truncated dump must be surfaced as incomplete, not "found nothing"')
+  } finally {
+    await rm(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('listVaultLabels (darwin): an ETIMEDOUT from dump-keychain is marked incomplete the same way as ENOBUFS', async () => {
+  const origin = 'https://1f3ea.com'
+  const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-darwin-keychain-etimedout-'))
+  try {
+    const deps = {
+      platform: 'darwin',
+      homeDir,
+      execFileSync: () => {
+        const error = new Error('spawnSync security ETIMEDOUT')
+        error.code = 'ETIMEDOUT'
+        throw error
+      },
+    }
+
+    const labels = listVaultLabels(origin, deps)
+    assert.equal(labels.incomplete, true)
+  } finally {
+    await rm(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('listVaultLabels (darwin): a missing `security` binary (ENOENT) is NOT marked incomplete -- that really is "nothing found"', async () => {
+  const origin = 'https://1f3ea.com'
+  const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-darwin-keychain-enoent-'))
+  try {
+    const deps = {
+      platform: 'darwin',
+      homeDir,
+      execFileSync: () => {
+        const error = new Error('spawnSync security ENOENT')
+        error.code = 'ENOENT'
+        throw error
+      },
+    }
+
+    const labels = listVaultLabels(origin, deps)
+    assert.deepEqual(labels, [])
+    assert.equal(labels.incomplete, undefined, 'a genuinely missing binary must not trip the incomplete signal')
+  } finally {
+    await rm(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('listVaultLabels (darwin): passes an explicit maxBuffer and timeout to execFileSync so a normal-sized Keychain dump never hits the 1 MiB default', async () => {
+  const origin = 'https://1f3ea.com'
+  const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-darwin-keychain-opts-'))
+  try {
+    let seenOptions = null
+    const deps = {
+      platform: 'darwin',
+      homeDir,
+      execFileSync: (command, args, options) => {
+        if (command === 'security' && args[0] === 'dump-keychain') {
+          seenOptions = options
+          return ''
+        }
+        throw new Error(`unexpected exec call: ${command} ${args.join(' ')}`)
+      },
+    }
+
+    listVaultLabels(origin, deps)
+    assert.ok(seenOptions, 'dump-keychain must actually be invoked')
+    assert.equal(seenOptions.maxBuffer, 64 * 1024 * 1024)
+    assert.ok(Number.isFinite(seenOptions.timeout) && seenOptions.timeout > 0, 'a timeout must be set')
   } finally {
     await rm(homeDir, { recursive: true, force: true })
   }

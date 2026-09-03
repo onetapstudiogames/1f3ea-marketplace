@@ -429,7 +429,23 @@ if (priorVaultEntry.keyWorks && newIdentity) {
 // recovery staging label, which is not a real registered identity) and
 // refuse outright unless --new-identity was passed.
 if (!newIdentity) {
-  const otherLabels = listVaultLabels(origin).filter(label => label !== handle)
+  const allLabels = listVaultLabels(origin)
+  if (allLabels.incomplete) {
+    // The Keychain (or Credential Manager) dump this enumeration relies on
+    // did not finish -- ENOBUFS or ETIMEDOUT, per listVaultLabels' own
+    // doc comment -- so the result below cannot be trusted to say no other
+    // entry exists for this origin. Reading that as "found nothing" would
+    // silently reopen the exact fail-open this whole guard exists to close.
+    console.error(
+      `setup: refusing to register "${handle}" as a new identity at ${origin}: this host's vault ` +
+      'enumeration did not finish (the Keychain dump was truncated or timed out), so it cannot be ' +
+      'trusted to say no other entry already exists for this origin. Fix or retry whatever is ' +
+      'blocking the dump, or pass --new-identity if a genuinely new merchant is really intended.',
+    )
+    process.exitCode = 1
+    process.exit()
+  }
+  const otherLabels = allLabels.filter(label => label !== handle)
   if (otherLabels.length > 0) {
     console.error(
       `setup: refusing to register "${handle}" as a new identity at ${origin}: this host's vault already ` +
