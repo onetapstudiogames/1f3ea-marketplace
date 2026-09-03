@@ -1,5 +1,57 @@
 # Changelog
 
+## [2.4.1] - 2026-09-03
+
+- Added `key adopt --handle <handle> --from-label <staging-label>`, to recover a merchant key
+  stranded under a staging label when a past run's server-side confirm succeeded but its local
+  vault promotion failed — a registration, a rotation, or a recovery. It probes `GET /api/me` with
+  the staged key, refuses unless that probe authenticates as `--handle` exactly, and only then
+  promotes it to the real label and deletes the staging copy. When something already lives at
+  `--handle`, adopt probes that too: if it still authenticates as `--handle`, both copies are
+  working keys and adopt refuses to pick one, pointing at reading both (`key show --handle
+  <handle> --reveal` and `key show --handle <staging-label> --reveal`) before deleting either; if
+  it does not — the shape a stranded rotation or recovery leaves, since the market has already
+  confirmed the new key and invalidated every recovery code by the time this runs — adopt promotes
+  the staged key over it and records the invalidation. `setup`'s own registration-staging refusal
+  points at it, and so do `rotate`'s and `recover begin`'s own stranded-key messages; `help` lists
+  it, and it is now also named in the root `SKILL.md` and `SETUP.md` command lists next to
+  `key status` / `key rotate` / `key recover` / `key show`, so it is no longer possible to read
+  either doc's key-command list and come away thinking that is the complete set.
+- **Corrected 2026-09-03:** the 2.4.0 "a merchant key never touches ... travels only ... or as the
+  one `merchant_key` field" bullet omitted the recovery code's own body-field transport: a
+  recovery code travels as the `recovery_code` field inside a request to `/api/recovery` (begin),
+  the same way a merchant key travels as `merchant_key` to `/api/register` (confirm), `/api/rotate`
+  (begin), and `/api/recovery` (generate) — an incomplete enumeration presented as complete. Every
+  one of these calls, like every other network call this skill makes, travels only over `https`
+  with redirects refused.
+- Fixed `scripts/run-tests-with-home-guard.mjs`'s handling of a failed platform-vault enumeration
+  (`cmdkey /list` or `security dump-keychain` itself failing to run): it used to suppress the
+  guard's other checks whenever this happened, so a real, already-proven `~/.1f3ea` directory leak
+  was reported only as "investigate the enumeration tool," hiding the leak the guard exists to
+  name. It now reports every failure that actually applies — enumeration failure, directory drift,
+  platform-vault target drift, and pre-existing loopback residue — together, never just the first
+  one found. The decision is now a pure, exported `classifyGuardResult` helper with direct test
+  coverage, including the specific case that regressed: a real directory leak reported alongside a
+  failed enumeration, not hidden behind it.
+- `key adopt` now refuses up front, with its own wording, when `--from-label` names the same entry
+  as `--handle` — there is no staging copy to move in that case, so it no longer tries the promote
+  and never surfaces `promoteReplacementKey`'s register()-specific "a concurrent run must have won
+  the race for this handle" wording for a caller that never registered anything.
+- The three `promoteReplacementKey` failure messages an agent can hit mid-registration, mid-
+  rotation, or mid-recovery (an unreadable existing vault entry, a failed final write, and a timed-
+  out per-handle lock) now name `key adopt --handle <handle> --from-label <staging-label>` as the
+  first remedy, ahead of the manual "read the key back and store it yourself" fallback that was
+  previously the only recovery path they described — these are the exact moments a stranded key
+  most needs `key adopt`, and it now genuinely works from a stranded rotation or recovery, not only
+  a stranded registration (see the `key adopt` bullet above). Each message also now names its own
+  key in its own words — "the confirmed merchant key from this registration," "... from this
+  rotation," "... from this recovery" — instead of a generic "replacement key" that told a
+  first-time registration its nonexistent "old key" no longer worked.
+- `npm run check:release-version` now also checks `.claude-plugin/marketplace.json`'s
+  `plugins[0].version` against the other five manifests, closing the one manifest that previously
+  had no gate but a hand-edited literal in `test/plugin-packaging.test.mjs`; that test now reads
+  `plugin.json`'s own version instead of repeating it as a literal.
+
 ## [2.4.0] - 2026-09-03
 
 - Added three real commands that were "coming soon" in 2.3.0: `setup`, `connect` (and
@@ -41,48 +93,6 @@
 - Taught `scripts/check-live-truth.mjs` to check the served llms.txt recovery-code count and the
   live `/api/official` `identity.coding_client_doors` shape, so a real door or recovery-code
   change fails CI instead of drifting silently.
-
-## [2.4.1] - 2026-09-03
-
-- Added `key adopt --handle <handle> --from-label <staging-label>`, to recover a merchant key
-  stranded under a registration staging label when a past run's server-side confirm succeeded but
-  its local vault promotion failed. It probes `GET /api/me` with the staged key, refuses unless
-  that probe authenticates as `--handle` exactly, and only then promotes it to the real label and
-  deletes the staging copy. `setup`'s own registration-staging refusal points at it, `help` lists
-  it, and it is now also named in the root `SKILL.md` and `SETUP.md` command lists next to
-  `key status` / `key rotate` / `key recover` / `key show`, so it is no longer possible to read
-  either doc's key-command list and come away thinking that is the complete set.
-- **Corrected 2026-09-03:** the 2.4.0 "a merchant key never touches ... travels only ... or as the
-  one `merchant_key` field" bullet omitted the recovery code's own body-field transport: a
-  recovery code travels as the `recovery_code` field inside a request to `/api/recovery` (begin),
-  the same way a merchant key travels as `merchant_key` to `/api/register` (confirm), `/api/rotate`
-  (begin), and `/api/recovery` (generate) — an incomplete enumeration presented as complete. Every
-  one of these calls, like every other network call this skill makes, travels only over `https`
-  with redirects refused.
-- Fixed `scripts/run-tests-with-home-guard.mjs`'s handling of a failed platform-vault enumeration
-  (`cmdkey /list` or `security dump-keychain` itself failing to run): it used to suppress the
-  guard's other checks whenever this happened, so a real, already-proven `~/.1f3ea` directory leak
-  was reported only as "investigate the enumeration tool," hiding the leak the guard exists to
-  name. It now reports every failure that actually applies — enumeration failure, directory drift,
-  platform-vault target drift, and pre-existing loopback residue — together, never just the first
-  one found. The decision is now a pure, exported `classifyGuardResult` helper with direct test
-  coverage, including the specific case that regressed: a real directory leak reported alongside a
-  failed enumeration, not hidden behind it.
-- `key adopt` now refuses up front, with its own wording, when `--from-label` names the same entry
-  as `--handle` — there is no staging copy to move in that case, so it no longer tries the promote
-  and never surfaces `promoteReplacementKey`'s register()-specific "a concurrent run must have won
-  the race for this handle" wording for a caller that never registered anything. When `--from-label`
-  does name a genuinely different, already-live entry, `key adopt` now reports that in its own
-  words — "the vault already holds a live entry for `<handle>`; adopt refuses to overwrite it" —
-  pointing at `key status --handle <handle>` to compare the two and manual deletion of the staging
-  copy if it is redundant, instead of the confusing race message.
-- The three `promoteReplacementKey` failure messages an agent can hit mid-registration, mid-
-  rotation, or mid-recovery (an unreadable existing vault entry, a failed final write, and a timed-
-  out per-handle lock) now name `key adopt --handle <handle> --from-label <staging-label>` as the
-  first remedy, ahead of the manual "read the key back and store it yourself" fallback that was
-  previously the only recovery path they described — these are the exact moments a stranded key
-  most needs `key adopt`, and previously the only way to learn the command existed was to hit
-  `setup`'s later registration-staging refusal separately.
 
 ## [2.3.0] - 2026-09-02
 
