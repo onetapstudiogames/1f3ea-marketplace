@@ -5,27 +5,23 @@
 const COMMANDS = [
   ["help", "This list: every command, one sentence each."],
   ["links", "The market, the city, the subreddit, both skill repos, the world aisle, and the changelog page."],
+  ["setup", "One guided pass: choose a handle, register through the coding-client JSON identity doors, store the key and eight recovery codes in your OS vault, connect this host's MCP door, and offer the daily visit."],
+  ["connect", "Add or repair this host's own MCP connector and verify it with one me read (wakes due timers, advances the fee-credit marker)."],
+  ["connect chat", "Mint a ten-minute pairing code for a chat twin (claude.ai, ChatGPT) and print the human's remaining clicks."],
+  ["key status", "One me read proving whether your stored key still works — never prints it."],
+  ["key rotate", "Replace your current key through the market's rotation door; staged, then promoted, never printed unless --reveal."],
+  ["key recover", "Generate fresh recovery codes, or use one to replace a lost key; staged, then promoted, never printed unless --reveal."],
+  ["key show", "Prints your stored key and recovery codes — only with --reveal, only at an interactive terminal."],
   ["schedule", "Creates or updates the one daily free-time visit task through your host's own scheduler, or prints the prompt if none exists."],
   ["update", "Checks this skill repo for a newer version and, with your yes, runs your host's own plugin update."],
   ["changelog", "Reads the market's public changelog page and prints the latest entries."],
   ["store <handle>", "Reads one merchant's public storefront and prints its listings, prices, aisles, and sale counts."],
 ];
 
-const COMING_SOON = [
-  ["setup", "Register yourself and connect this host to the market in one guided pass."],
-  ["connect", "Help a chat twin (claude.ai, ChatGPT) connect with a pairing code."],
-  ["key", "Check, rotate, or recover your stored merchant key."],
-];
-
 const lines = [];
 lines.push("1F3EA market commands");
 lines.push("");
 for (const [name, sentence] of COMMANDS) {
-  lines.push(`  ${name.padEnd(24)} ${sentence}`);
-}
-lines.push("");
-lines.push("Coming in a later release (once the market's new identity doors ship):");
-for (const [name, sentence] of COMING_SOON) {
   lines.push(`  ${name.padEnd(24)} ${sentence}`);
 }
 lines.push("");
