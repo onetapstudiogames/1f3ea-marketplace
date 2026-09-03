@@ -159,10 +159,10 @@ test('register --replace-vault-entry deliberately overwrites an existing entry',
 // would delete whatever the loser had just staged there (review finding
 // "two concurrent register runs share one staging label").
 
-test('two concurrent register runs for the same handle: the winner promotes, the loser refuses and cleans up after itself', async () => {
+test('two concurrent register runs for the same handle: the winner promotes, the loser refuses and cleans up after itself', { timeout: 20_000 }, async () => {
   // registerConfirmBarrier forces the two real subprocesses' confirm calls
   // to genuinely overlap at the server -- see the stub's own doc comment.
-  // 'confirm' is register()'s LAST network call before its own local
+  // confirm is the FIRST network call register() makes AFTER its own local
   // pre-flight vault check, so a confirm reaching the barrier already
   // proves both processes independently staged and pre-flight-checked
   // without either seeing the other's work; without this, a loaded runner
@@ -1074,9 +1074,80 @@ test('connect.mjs chat surfaces the market\'s pairing_unavailable refusal verbat
     const result = await runNode(connectPath, ['chat', '--origin', stub.origin, '--handle', 'agent-chat-2'], { env: home.env })
     assert.notEqual(result.status, 0)
     assert.match(result.stderr, /nowhere to be redeemed|pairing code would have/u, 'the real refusal sentence reaches the caller, not a generic failure message')
+    // postAuthed (identity-client.mjs) must surface the machine-readable
+    // reason the same way postJson already does, not just the human
+    // sentence -- a caller or harness branches on this name.
+    assert.match(result.stderr, /reason: pairing_unavailable/u)
     assertNoSecretLeaked(result, 'connect.mjs chat pairing_unavailable')
   } finally {
     deleteSecret(stub.origin, 'agent-chat-2', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+// HIGH: connectChat must run the same one-me-read probe connectHost already
+// runs before ever spawning `pair`, and refuse on a handle mismatch --
+// otherwise a stale label, a hand-copied entry, or a market-normalized
+// handle silently mints a working pairing code bound to a DIFFERENT
+// merchant than the one the human was told they were pairing.
+
+test('connect.mjs chat refuses to mint a pairing code when the stored key authenticates as a different handle', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('connect-chat-mismatch-')
+  try {
+    stub.merchants.set('adv-bob', { merchant_key: `1f3ea_sk_${'7'.repeat(48)}`, recovery_codes: [], client_class: 'coding_persistent' })
+    // bob's key, planted under alice's label -- a stale label, a hand-copied
+    // entry, or a market-normalized handle all produce this shape.
+    storeSecret(stub.origin, 'adv-alice', {
+      kind: 'merchant',
+      handle: 'adv-alice',
+      client_class: 'coding_persistent',
+      merchant_key: stub.merchants.get('adv-bob').merchant_key,
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(connectPath, ['chat', '--origin', stub.origin, '--handle', 'adv-alice'], { env: home.env })
+    assert.notEqual(result.status, 0, 'a handle mismatch must refuse, never mint a pairing code for the wrong merchant')
+    assert.match(result.stderr, /MISMATCH/u)
+    assert.match(result.stderr, /adv-alice/u)
+    assert.match(result.stderr, /adv-bob/u)
+    assert.doesNotMatch(result.stdout, /1f3ea_pc_[0-9a-f]{48}/u, 'no pairing code is ever printed on a mismatch')
+    assertNoSecretLeaked(result, 'connect.mjs chat mismatch')
+  } finally {
+    deleteSecret(stub.origin, 'adv-alice', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+// Sanity check for the same probe from the OTHER side: a stored key that
+// simply does not authenticate at all (a bad/rotated key never reconciled)
+// must also refuse before spawning `pair`, not just a same-market mismatch.
+
+test('connect.mjs chat refuses to mint a pairing code when the stored key does not authenticate at all', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('connect-chat-badkey-')
+  try {
+    storeSecret(stub.origin, 'adv-ghost', {
+      kind: 'merchant',
+      handle: 'adv-ghost',
+      client_class: 'coding_persistent',
+      merchant_key: `1f3ea_sk_${'0'.repeat(48)}`, // never registered with the stub
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(connectPath, ['chat', '--origin', stub.origin, '--handle', 'adv-ghost'], { env: home.env })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /FAILED/u)
+    assert.doesNotMatch(result.stdout, /1f3ea_pc_[0-9a-f]{48}/u, 'no pairing code is ever printed when the probe fails')
+    assertNoSecretLeaked(result, 'connect.mjs chat bad key')
+  } finally {
+    deleteSecret(stub.origin, 'adv-ghost', { homeDir: home.dir })
     home.cleanup()
     await stub.close()
   }
@@ -1106,6 +1177,43 @@ test('key show refuses to print "undefined" when a stored bundle has no merchant
     assert.match(result.stdout, /carries no merchant_key/u)
   } finally {
     deleteSecret(origin, 'no-key-handle', { homeDir: home.dir })
+    home.cleanup()
+  }
+})
+
+// `key show --reveal` on a non-interactive stdout (runNode's pipes are
+// never a TTY) must diagnose the real reason -- stdout is not interactive
+// -- and exit 1, the same way `key rotate --reveal` already does, instead
+// of silently dropping the flag, exiting 0, and telling the caller to pass
+// the flag it just passed.
+
+test('key show --reveal on a non-interactive stdout diagnoses the reason and exits 1, like key rotate does', async () => {
+  const origin = 'https://example.invalid'
+  const home = makeTempHome('key-show-reveal-nontty-')
+  try {
+    storeSecret(origin, 'has-a-key-handle', {
+      kind: 'merchant',
+      handle: 'has-a-key-handle',
+      client_class: 'coding_persistent',
+      merchant_key: `1f3ea_sk_${'9'.repeat(48)}`,
+      recovery_codes: [],
+      origin,
+    }, { homeDir: home.dir })
+
+    const result = await runNode(
+      keyPath,
+      ['show', '--origin', origin, '--allow-origin', origin, '--handle', 'has-a-key-handle', '--reveal'],
+      { env: { ...home.env, ...NOT_A_REAL_ORIGIN_ENV }, stdio: ['pipe', 'pipe', 'pipe'] },
+    )
+    assert.notEqual(result.status, 0, '--reveal on a non-TTY stdout must refuse, not silently drop the flag')
+    assert.match(result.stderr, /cannot work through this wrapper|interactive terminal/u)
+    assert.doesNotMatch(
+      result.stdout, /pass --reveal/u,
+      'must not tell the caller to pass a flag it already passed',
+    )
+    assertNoSecretLeaked(result, 'key show --reveal non-TTY')
+  } finally {
+    deleteSecret(origin, 'has-a-key-handle', { homeDir: home.dir })
     home.cleanup()
   }
 })
