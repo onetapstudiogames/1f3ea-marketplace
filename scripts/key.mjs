@@ -313,6 +313,19 @@ function show() {
     return
   }
   console.log(`handle: ${handle}`)
+  if (flags.reveal === true && !process.stdout.isTTY) {
+    // Same diagnosis runIdentityClient's own --reveal check above gives
+    // rotate/recover generate, and setup.mjs's adopt-report path: --reveal
+    // WAS passed, but this process's stdout is not an interactive
+    // terminal, so there is nowhere safe to print the secret once. Exit 1
+    // rather than silently falling through to the no-flag message below,
+    // which would misname the reason as "you forgot the flag" when the
+    // caller did not.
+    console.error('key show: --reveal cannot work through this wrapper; run scripts/identity-client.mjs ' +
+      'directly at an interactive terminal.')
+    process.exitCode = 1
+    return
+  }
   if (flags.reveal === true && process.stdout.isTTY) {
     console.log('Merchant key (shown once):')
     console.log(stored.value.merchant_key)
