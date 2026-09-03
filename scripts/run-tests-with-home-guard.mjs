@@ -25,6 +25,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { readdirSync, statSync } from 'node:fs'
 import { homedir, platform } from 'node:os'
 import { join, relative } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { parseKeychainServiceNames } from './identity-client.mjs'
 
 const VAULT_DIR_NAME = '.1f3ea'
@@ -198,30 +199,129 @@ function formatTargetDiff(diff) {
   return lines.join('\n')
 }
 
-const vaultDir = join(homedir(), VAULT_DIR_NAME)
-const before = snapshotDir(vaultDir)
-const targetsBefore = snapshotPlatformVaultTargets()
+// The before/after diff above (isTargetDrift/formatTargetDiff) only ever
+// catches a leak that happens DURING this run -- it diffs two snapshots
+// taken by this same process, so a credential that was already sitting in
+// the real platform vault before this run even started is present in BOTH
+// snapshots and the diff sees nothing. A developer whose run failed this
+// guard, who then re-runs to check whether they fixed it, would see this
+// guard report green while the leaked credential is still in Credential
+// Manager or Keychain. Everything below inspects targetsBefore alone (never
+// targetsAfter, and never a diff) to catch exactly that residue.
+//
+// Only a TEST can ever create a `1f3ea:` vault target under a loopback
+// origin (localhost or 127.0.0.1) -- the real market this plugin talks to
+// lives at a real hostname (see AGENT_1F3EA_STUB_ONLY / origin-guard.mjs),
+// so a real merchant's own vault entry is always `1f3ea:https://1f3ea.com:
+// <handle>` or similar, never loopback. That asymmetry is what lets this
+// classifier fail on leaked test residue while never refusing on a real,
+// legitimately registered merchant that happens to already be in the vault
+// when `npm test` starts.
+const VAULT_TARGET_PATTERN = /^1f3ea:(https?:\/\/[^:/]+(?::\d+)?)(?:\/[^:]*)?:(.+)$/u
 
-const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2)], {
-  stdio: 'inherit',
-})
-
-const after = snapshotDir(vaultDir)
-const diff = diffSnapshots(before, after)
-const targetsAfter = snapshotPlatformVaultTargets()
-const targetDiff = diffTargetNames(targetsBefore, targetsAfter)
-const targetsComparable = targetsBefore.supported && targetsAfter.supported
-
-if (isDrift(diff)) {
-  console.error(`\nidentity-vault-home-guard: ${formatDiff(diff, before, after)}`)
-  process.exitCode = 1
-} else if (targetsComparable && isTargetDrift(targetDiff)) {
-  console.error(`\nidentity-vault-home-guard: ${formatTargetDiff(targetDiff)}`)
-  process.exitCode = 1
-} else if (result.status !== 0) {
-  process.exitCode = result.status ?? 1
-} else if (result.signal) {
-  process.exitCode = 1
-} else {
-  process.exitCode = 0
+/**
+ * Splits a `1f3ea:<origin>:<label>` platform-vault target name (the exact
+ * shape identity-client.mjs's own vaultTarget writes) into its origin and
+ * label. Origin itself contains colons (`http://localhost:41234`), so this
+ * cannot just split on ":" -- it anchors on the scheme://host[:port] shape
+ * an origin always has instead. Returns null for anything that does not
+ * match that shape at all (should never happen for a name already filtered
+ * to the `1f3ea:` prefix by snapshotPlatformVaultTargets, but this stays
+ * defensive rather than throwing on a target text this guard cannot parse).
+ */
+function parseVaultTargetName(name) {
+  const match = VAULT_TARGET_PATTERN.exec(name)
+  if (!match) return null
+  return { origin: match[1], label: match[2] }
 }
+
+/** True only for a loopback host -- never for a real, non-loopback merchant origin. */
+function isLoopbackOrigin(origin) {
+  let hostname
+  try {
+    hostname = new URL(origin).hostname
+  } catch {
+    return false
+  }
+  return hostname === 'localhost' || hostname === '127.0.0.1'
+}
+
+/**
+ * The `1f3ea:` vault target names in `targetsBefore` (a snapshotPlatformVaultTargets()
+ * result) that name a loopback origin -- test residue that was already in the real
+ * platform vault before this run started. `{ supported: false }` (or any name this
+ * host's parser could not classify) yields an empty result rather than a false positive.
+ */
+function findPreexistingLoopbackLeaks(targetsBefore) {
+  if (!targetsBefore.supported) return []
+  return targetsBefore.names.filter(name => {
+    const parsed = parseVaultTargetName(name)
+    return parsed !== null && isLoopbackOrigin(parsed.origin)
+  })
+}
+
+function formatPreexistingLeakDiff(leaks) {
+  const noun = leaks.length === 1 ? 'entry' : 'entries'
+  const lines = [
+    `this host's real OS credential vault already held ${leaks.length} loopback-origin "${VAULT_TARGET_PREFIX}" ${noun} ` +
+    'BEFORE this run started',
+  ]
+  for (const name of leaks) lines.push(`  ! ${name}`)
+  lines.push(
+    'Only a test ever creates a `1f3ea:` vault target under a loopback origin (localhost or 127.0.0.1) -- a ' +
+    'real merchant\'s own entry always names a real hostname, so this can only be residue a PREVIOUS run ' +
+    'leaked into the real platform vault and never cleaned up. The before/after diff above cannot see this: ' +
+    'it only catches a leak that happens during THIS run, so a developer re-running after "fixing" a leak ' +
+    'would see this guard report green while the leaked credential is still sitting in Credential Manager or ' +
+    'Keychain. Remove it by name (never by value, and never any other `1f3ea:` entry -- a real merchant ' +
+    'registered at a real hostname on this host must never be touched) and find the call site that leaked ' +
+    'it. Names only, above and in this message -- never values.',
+  )
+  return lines.join('\n')
+}
+
+function runGuard() {
+  const vaultDir = join(homedir(), VAULT_DIR_NAME)
+  const before = snapshotDir(vaultDir)
+  const targetsBefore = snapshotPlatformVaultTargets()
+  const preexistingLoopbackLeaks = findPreexistingLoopbackLeaks(targetsBefore)
+
+  const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2)], {
+    stdio: 'inherit',
+  })
+
+  const after = snapshotDir(vaultDir)
+  const diff = diffSnapshots(before, after)
+  const targetsAfter = snapshotPlatformVaultTargets()
+  const targetDiff = diffTargetNames(targetsBefore, targetsAfter)
+  const targetsComparable = targetsBefore.supported && targetsAfter.supported
+
+  if (isDrift(diff)) {
+    console.error(`\nidentity-vault-home-guard: ${formatDiff(diff, before, after)}`)
+    process.exitCode = 1
+  } else if (targetsComparable && isTargetDrift(targetDiff)) {
+    console.error(`\nidentity-vault-home-guard: ${formatTargetDiff(targetDiff)}`)
+    process.exitCode = 1
+  } else if (preexistingLoopbackLeaks.length > 0) {
+    console.error(`\nidentity-vault-home-guard: ${formatPreexistingLeakDiff(preexistingLoopbackLeaks)}`)
+    process.exitCode = 1
+  } else if (result.status !== 0) {
+    process.exitCode = result.status ?? 1
+  } else if (result.signal) {
+    process.exitCode = 1
+  } else {
+    process.exitCode = 0
+  }
+}
+
+const isMainModule = process.argv[1] !== undefined
+  && import.meta.url === pathToFileURL(process.argv[1]).href
+
+if (isMainModule) {
+  runGuard()
+}
+
+// Exported for tests only -- the CLI entry point above never uses this
+// import path itself, so importing this module never runs the guard (and
+// never spawns `node --test` recursively).
+export { findPreexistingLoopbackLeaks, isLoopbackOrigin, parseVaultTargetName }
