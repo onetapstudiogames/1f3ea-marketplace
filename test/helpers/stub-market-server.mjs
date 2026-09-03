@@ -41,9 +41,22 @@ const TLS_OPTIONS = {
 // (src/core.ts: secret => 'sk_' + 48 hex, recovery_code => 'rc_' + 64 hex)
 // and the handle rule every JSON door enforces (src/core.ts HANDLE_RE).
 const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/u
+// src/market-identity-json-routes.ts's own MERCHANT_KEY_RE (via
+// credentialShapeRe('secret')) -- used below by the confirm doors' own
+// requireMerchantKeyShape, matching the real requireMerchantKey's SHAPE-only
+// check (src/market-identity-json-routes.ts:137-141), before any pending-
+// stage lookup.
+const MERCHANT_KEY_RE = /^1f3ea_sk_[0-9a-f]{48}$/u
 // src/market-identity-fields.ts CEREMONY_TOKEN_RE -- both session and csrf
 // must be exactly this shape before this stub even looks either up.
 const CEREMONY_TOKEN_RE = /^[0-9a-f]{64}$/u
+// src/market-identity-fields.ts's own DISALLOWED_MODEL_CHARACTERS (used by
+// identityModelValue below) -- kept as a separate copy here, deliberately
+// not imported from scripts/identity-client.mjs, so this stub stays an
+// independent double of the real market's own validation, the same way
+// HANDLE_RE/CEREMONY_TOKEN_RE above are already independent copies.
+const DISALLOWED_MODEL_CHARACTERS_RE =
+  new RegExp('[\\u0000-\\u001f\\u007f\\u061c\\u200e\\u200f\\u2028-\\u202e\\u2066-\\u2069]', 'u')
 const CODING_CLIENT_CLASSES = new Set(['coding_persistent', 'coding_ephemeral'])
 const CEREMONY_SECONDS = 900
 const PAIRING_CODE_SECONDS = 10 * 60
@@ -157,6 +170,37 @@ function requireCeremonyFields(res, body) {
   return false
 }
 
+/**
+ * Mirrors requireMerchantKey in market-identity-json-routes.ts -- SHAPE only
+ * (never a store lookup), checked BEFORE the pending-stage Map lookup on
+ * every confirm door (register/rotate/recovery), matching the real
+ * handler's own order (requireFields -> requireCeremony -> requireMerchantKey
+ * -> storage). Without this, a malformed key on an unknown/expired session
+ * was refused the unrelated request_unavailable instead of credential_rejected
+ * -- a fidelity gap this stub's own comment block documents pinning against.
+ * The pending Map's own merchant_key VALUE comparison (each confirm
+ * handler's own `pending.merchant_key !== body.merchant_key` check) is a
+ * separate, later check and is untouched by this.
+ */
+function requireMerchantKeyShape(res, body) {
+  const key = body.merchant_key
+  if (typeof key === 'string' && MERCHANT_KEY_RE.test(key)) return true
+  fail(res, 403, 'credential_rejected', 'That merchant key could not be verified. Check it and retry.')
+  return false
+}
+
+/**
+ * Mirrors identityModelValue in market-identity-fields.ts: at most 120 code
+ * points after trimming, no control or directional-override marks. Returns
+ * the trimmed model, or `null` on a value that fails either rule (the
+ * caller then reports the same invalid_identity reason the real door does).
+ */
+function identityModelValue(value) {
+  const trimmed = value.trim()
+  if (Array.from(trimmed).length > 120 || DISALLOWED_MODEL_CHARACTERS_RE.test(trimmed)) return null
+  return trimmed
+}
+
 const REGISTER_STAGE_FIELDS = ['action', 'handle', 'model', 'client_class', 'human_approved']
 const REGISTER_CONFIRM_FIELDS = ['action', 'session', 'csrf', 'merchant_key']
 const REGISTER_CANCEL_FIELDS = ['action', 'session', 'csrf']
@@ -241,9 +285,14 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
           }
           // Mirrors requireHandleAndModel: model must be PRESENT (an empty
           // string is fine), never merely truthy -- this is the exact check
-          // whose absence let a model-less registration through before.
+          // whose absence let a model-less registration through before. Once
+          // present, it also runs through identityModelValue above (trim,
+          // at most 120 code points, no control/directional marks) --
+          // without this a 200-character or control-character model was
+          // silently accepted here even though the real door refuses both.
           const handle = typeof body.handle === 'string' ? body.handle.toLowerCase().trim() : null
-          const model = typeof body.model === 'string' ? body.model : null
+          const rawModel = typeof body.model === 'string' ? body.model : null
+          const model = rawModel === null ? null : identityModelValue(rawModel)
           if (!handle || !HANDLE_RE.test(handle) || model === null) {
             return fail(
               res, 400, 'invalid_identity',
@@ -279,6 +328,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
         if (body.action === 'confirm') {
           if (!requireFields(res, body, REGISTER_CONFIRM_FIELDS)) return
           if (!requireCeremonyFields(res, body)) return
+          if (!requireMerchantKeyShape(res, body)) return
           const pending = pendingRegistrations.get(body.session)
           if (!pending || pending.csrf !== body.csrf) {
             return fail(
@@ -372,6 +422,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
         if (body.action === 'confirm') {
           if (!requireFields(res, body, ROTATE_CONFIRM_FIELDS)) return
           if (!requireCeremonyFields(res, body)) return
+          if (!requireMerchantKeyShape(res, body)) return
           const pending = pendingRotations.get(body.session)
           if (!pending || pending.csrf !== body.csrf) {
             return fail(
@@ -443,6 +494,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
         if (body.action === 'confirm') {
           if (!requireFields(res, body, RECOVERY_CONFIRM_FIELDS)) return
           if (!requireCeremonyFields(res, body)) return
+          if (!requireMerchantKeyShape(res, body)) return
           const pending = pendingRecoveries.get(body.session)
           if (!pending || pending.csrf !== body.csrf) {
             return fail(
