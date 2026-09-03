@@ -310,39 +310,61 @@ function formatPreexistingLeakDiff(leaks) {
   return lines.join('\n')
 }
 
+/**
+ * The pure decision core of the guard: given the before/after directory
+ * snapshots and the before/after platform-vault target snapshots, decides
+ * which of this guard's four independent failure conditions apply --
+ * enumeration failure, a real directory drift, a real platform-vault target
+ * drift, and pre-existing loopback residue -- and returns a message for
+ * EVERY one that does, never just the first. These conditions are
+ * independent of each other: in particular, a failed enumeration
+ * (`targetsBefore.ok === false` or `targetsAfter.ok === false`) says
+ * nothing about whether the DIRECTORY snapshot (`before`/`after`, taken
+ * independently of the platform-vault enumeration tool) shows a real leak
+ * -- `diff`/`isDrift` above already proves or disproves that on its own,
+ * with or without a working `cmdkey`/`security`. Treating enumeration
+ * failure as if it made every other check meaningless (an earlier version
+ * of this function did, via an exclusive if/else chain) silently hid a
+ * real, already-proven `~/.1f3ea` leak behind "investigate the enumeration
+ * tool" whenever that tool happened to fail on the same run. This function
+ * takes no action and touches nothing -- it only classifies -- so it can be
+ * exercised directly by a test with hand-built snapshot objects, never a
+ * real home directory or a real `node --test` subprocess.
+ */
+function classifyGuardResult({ before, after, targetsBefore, targetsAfter }) {
+  const diff = diffSnapshots(before, after)
+  const enumerationFailed = targetsBefore.ok === false || targetsAfter.ok === false
+  const targetsComparable = targetsBefore.supported && targetsAfter.supported && !enumerationFailed
+  const targetDiff = targetsComparable ? diffTargetNames(targetsBefore, targetsAfter) : { added: [], removed: [] }
+  const preexistingLoopbackLeaks = findPreexistingLoopbackLeaks(targetsBefore)
+
+  const messages = []
+  if (enumerationFailed) messages.push(formatEnumerationFailure(targetsBefore, targetsAfter))
+  if (isDrift(diff)) messages.push(formatDiff(diff, before, after))
+  if (isTargetDrift(targetDiff)) messages.push(formatTargetDiff(targetDiff))
+  if (preexistingLoopbackLeaks.length > 0) messages.push(formatPreexistingLeakDiff(preexistingLoopbackLeaks))
+
+  return { messages, failed: messages.length > 0 }
+}
+
 function runGuard() {
   const vaultDir = join(homedir(), VAULT_DIR_NAME)
   const before = snapshotDir(vaultDir)
   const targetsBefore = snapshotPlatformVaultTargets()
-  const preexistingLoopbackLeaks = findPreexistingLoopbackLeaks(targetsBefore)
 
   const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2)], {
     stdio: 'inherit',
   })
 
   const after = snapshotDir(vaultDir)
-  const diff = diffSnapshots(before, after)
   const targetsAfter = snapshotPlatformVaultTargets()
-  const enumerationFailed = targetsBefore.ok === false || targetsAfter.ok === false
-  const targetsComparable = targetsBefore.supported && targetsAfter.supported && !enumerationFailed
-  const targetDiff = targetsComparable ? diffTargetNames(targetsBefore, targetsAfter) : { added: [], removed: [] }
+  const { messages, failed } = classifyGuardResult({ before, after, targetsBefore, targetsAfter })
 
-  if (enumerationFailed) {
-    // Checked FIRST, before either drift check below: a failed enumeration
-    // makes both of those checks meaningless (see snapshotPlatformVaultTargets'
-    // own doc comment) -- comparing an incomplete read to anything else, or
-    // silently skipping the comparison, could hide a real leak or report
-    // spurious drift. Fail the run outright instead of guessing.
-    console.error(`\nidentity-vault-home-guard: ${formatEnumerationFailure(targetsBefore, targetsAfter)}`)
-    process.exitCode = 1
-  } else if (isDrift(diff)) {
-    console.error(`\nidentity-vault-home-guard: ${formatDiff(diff, before, after)}`)
-    process.exitCode = 1
-  } else if (isTargetDrift(targetDiff)) {
-    console.error(`\nidentity-vault-home-guard: ${formatTargetDiff(targetDiff)}`)
-    process.exitCode = 1
-  } else if (preexistingLoopbackLeaks.length > 0) {
-    console.error(`\nidentity-vault-home-guard: ${formatPreexistingLeakDiff(preexistingLoopbackLeaks)}`)
+  for (const message of messages) {
+    console.error(`\nidentity-vault-home-guard: ${message}`)
+  }
+
+  if (failed) {
     process.exitCode = 1
   } else if (result.status !== 0) {
     process.exitCode = result.status ?? 1
@@ -363,4 +385,7 @@ if (isMainModule) {
 // Exported for tests only -- the CLI entry point above never uses this
 // import path itself, so importing this module never runs the guard (and
 // never spawns `node --test` recursively).
-export { findPreexistingLoopbackLeaks, isLoopbackOrigin, parseVaultTargetName }
+export {
+  findPreexistingLoopbackLeaks, isLoopbackOrigin, parseVaultTargetName,
+  snapshotPlatformVaultTargets, classifyGuardResult,
+}
