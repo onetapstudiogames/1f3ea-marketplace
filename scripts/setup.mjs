@@ -33,23 +33,17 @@
 // question directly, as one more confirmation ON TOP OF the valid token —
 // never as a substitute for it, and never on the first run.
 //
-// What this token IS: proof that a first pass ran here and printed the
-// question, before this exact registration was allowed to proceed — so an
-// agent cannot self-approve inside a single call with no refusal in between.
-// What this token is NOT: proof that a human ever saw or answered that
-// question. Nothing stops the SAME agent, in the SAME unattended session,
-// from running the first pass, reading the token it prints, and immediately
-// running the second pass itself — the mechanism cannot detect or prevent
-// that, and does not try to. The market records a valid token as this agent's
-// own declaration that a human said yes out of band; it
-// is never proof of who actually said it, and a deliberate agent that
-// satisfies this gate without a real human answer is making a false
-// declaration on that public record, not defeating a security control.
-// What the two-pass shape actually buys: it forces the exact question to be
-// printed, in the agent's own transcript, before registration can happen —
-// so a human reviewing that transcript can see plainly whether the question
-// was ever really put to them, and a careless one-shot "just register me"
-// call can never slip through unnoticed.
+// What this token IS: proof that this exact registration was refused once,
+// with the question printed, before a second call could proceed — it does
+// NOT prove a human ever saw or answered that question, and nothing stops
+// the SAME agent, in the SAME unattended session, from running the first
+// pass, reading the token it prints, and immediately running the second
+// pass itself — the mechanism cannot detect or prevent that, and does not
+// try to. The market records a valid token as this agent's own declaration
+// that a human said yes out of band; it is never proof of who actually
+// said it, and a deliberate agent that satisfies this gate without a real
+// human answer is making a false declaration on that public record, not
+// defeating a security control.
 
 import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
@@ -58,7 +52,9 @@ import { resolve } from 'node:path'
 import { pluginRoot } from './lib/paths.mjs'
 import { readSetupState, writeSetupState, SetupStateReadFailure } from './lib/identity-state.mjs'
 import { probeMe } from './lib/identity-probe.mjs'
-import { readSecret, SecretReadFailure, listVaultLabels, HANDLE_RE } from './identity-client.mjs'
+import {
+  readSecret, SecretReadFailure, listVaultLabels, HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE,
+} from './identity-client.mjs'
 import { assertAllowedOrigin } from './lib/origin-guard.mjs'
 
 function parseArgs(argv) {
@@ -341,6 +337,20 @@ if (!HANDLE_RE.test(handle)) {
   process.exit()
 }
 
+// Same reservation identity-client.mjs's own register()/rotate() enforce --
+// checked here too, before ever asking for approval, so the guarantee above
+// actually holds: a handle containing "--pending-" would otherwise pass
+// HANDLE_RE, reach the human-approval question, and only then be refused by
+// register() once approved.
+if (RESERVED_HANDLE_SUBSTRING_RE.test(handle)) {
+  console.error(
+    `setup: --handle "${handle}" contains "--pending-", which this script reserves for its own in-flight ` +
+    'staging labels. Choose a handle that does not contain that sequence, then re-run.',
+  )
+  process.exitCode = 1
+  process.exit()
+}
+
 // Same discipline as the handle check just above, applied to the other
 // value the approval question names: checked locally, before any approval
 // step or network call, so a human is never asked to approve a client class
@@ -408,7 +418,10 @@ if (!newIdentity) {
       `label (${otherLabels.join(', ')}). A lost or never-written setup-state.json must never turn an ` +
       'existing merchant into a second, permanent, unrecoverable one. If one of those is really this ' +
       'agent\'s own entry under a stale or normalized label, pass --handle <that label> instead. Only ' +
-      'pass --new-identity if a genuinely new merchant, distinct from all of those, is really intended.',
+      'pass --new-identity if a genuinely new merchant, distinct from all of those, is really intended. ' +
+      '(On Windows, a label shaped like "<handle>--pending-<kind>" listed above could be either a ' +
+      'genuine abandoned staging copy or a real merchant whose non-secret vault-index entry was lost -- ' +
+      'listVaultLabels cannot always tell the two apart from a Credential Manager scrape alone.)',
     )
     process.exitCode = 1
     process.exit()
