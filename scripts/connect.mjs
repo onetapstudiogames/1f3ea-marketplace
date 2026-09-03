@@ -174,7 +174,7 @@ async function connectHost() {
   console.log(`one me read: OK (handle: ${probe.handle ?? handle}).`)
 }
 
-function connectChat() {
+async function connectChat() {
   const handle = resolveHandle('connect chat')
   if (!handle) return
   const pairArgs = [identityClientPath, 'pair', '--origin', origin]
@@ -197,6 +197,28 @@ function connectChat() {
     return
   }
 
+  // Same check connectHost runs (one me read) before ever printing a
+  // connector command -- without it, a stale label, a hand-copied entry, or
+  // a market-normalized handle could silently mint a working pairing code
+  // for a DIFFERENT merchant than the one the human was told they were
+  // pairing (round-2 review, HIGH: connectChat never verified the stored
+  // key actually authenticates as `handle` before spawning `pair`).
+  const probe = await probeMe(origin, stored.value.merchant_key, { allowOrigin })
+  if (!probe.ok) {
+    console.error(`connect chat: one me read: FAILED (${probe.error})`)
+    process.exitCode = 1
+    return
+  }
+  if (probe.handle && probe.handle !== handle) {
+    console.error(
+      `connect chat: one me read: MISMATCH — the vault entry labelled "${handle}" actually authenticates ` +
+      `as "${probe.handle}". Pass --handle ${probe.handle} instead, or fix the entry.`,
+    )
+    process.exitCode = 1
+    return
+  }
+  const confirmedHandle = probe.handle ?? handle
+
   const result = spawnSync(
     process.execPath,
     [...pairArgs, '--merchant-key-file', '-'],
@@ -210,15 +232,21 @@ function connectChat() {
   }
   console.log(output)
   console.log('')
+  // Names the merchant this code was actually confirmed to bind, so step
+  // 4's "confirm the merchant it connects" is checkable against something
+  // this script actually stated, not just implied by which --handle was
+  // passed on the command line.
+  console.log(`This pairing code is bound to merchant "${confirmedHandle}" at ${origin}.`)
+  console.log('')
   console.log('These clicks remain for the human — this script cannot do them:')
   console.log(`  1. In the chat app (claude.ai, ChatGPT, etc.), open connector settings and add ${origin}/mcp/connect`)
   console.log('  2. Press "sign in" on that connector.')
   console.log('  3. On the sign-in page, choose "I already have a store" and enter the code above.')
-  console.log('  4. Confirm the merchant it connects before the final click.')
+  console.log(`  4. Confirm the merchant it connects (should read "${confirmedHandle}") before the final click.`)
 }
 
 if (positionals[0] === 'chat') {
-  connectChat()
+  await connectChat()
 } else {
   await connectHost()
 }
