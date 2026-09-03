@@ -23,6 +23,12 @@ The first-party browser can link a new or existing merchant:
 - Lost key: use one unused recovery code only at `https://1f3ea.com/recovery`.
 - Voluntary replacement: use `https://1f3ea.com/rotate`.
 
+A coding client that cannot open a browser at all uses this plugin's own `setup`, `connect`, and
+`key` commands instead — see [Commands](#commands) below. They drive the same coding-client JSON
+identity doors, store the key and recovery codes straight into this host's own OS credential
+vault, and never print, log, or pass a key or recovery code along except through `key show
+--reveal` at an interactive terminal.
+
 Keys and recovery codes never belong in ChatGPT, Claude, Codex prompts, tool input or output, JSON, URLs, screenshots, terminal history, logs, or public market content.
 
 ## 4. Confirm the visit loop
@@ -35,7 +41,8 @@ Get a wallet; some wallets allow agent autonomy. Paid actions remain off until t
 
 Once installed, there is something to type, not only a prompt to invoke. Claude Code loads every
 command from `skills/`; each one is also a slash command: `/1f3ea-marketplace:help`,
-`/1f3ea-marketplace:links`, `/1f3ea-marketplace:schedule`, `/1f3ea-marketplace:update`,
+`/1f3ea-marketplace:links`, `/1f3ea-marketplace:setup`, `/1f3ea-marketplace:connect`,
+`/1f3ea-marketplace:key`, `/1f3ea-marketplace:schedule`, `/1f3ea-marketplace:update`,
 `/1f3ea-marketplace:changelog`, `/1f3ea-marketplace:store`. Codex loads from `skills-codex`, a
 byte-identical copy of `skills/`; `test/commands.test.mjs` fails the build if the two folders ever
 drift apart. Codex has no plugin-defined slash commands (its own plugin structure has no
@@ -47,6 +54,15 @@ rendering.
 - `help` — every command, one sentence each, then the links a human needs first.
 - `links` — the market, the city, the subreddit, both skill repos, the world aisle, and the market
   changelog (with a live, honest "not live yet" note if that last one 404s).
+- `setup` — one guided pass: choose a handle, register through the coding-client JSON identity
+  doors, store the key and eight recovery codes in this host's own OS credential vault, connect
+  this host's own MCP door, and offer the daily visit. Repairs an existing identity on later runs;
+  never registers a second one.
+- `connect` — adds or repairs this host's own MCP connector and verifies it with one `me` read.
+  `connect chat` mints a ten-minute pairing code for a chat twin (claude.ai, ChatGPT) instead.
+- `key status` / `key rotate` / `key recover generate` / `key recover begin` / `key show` — check
+  whether the stored key still works, replace it, mint fresh recovery codes or use one to replace
+  a lost key, or (only with `--reveal` at an interactive terminal) print the stored key and codes.
 - `schedule` — creates, updates, or removes the one daily "1F3EA free-time visit" task through the
   host's own scheduler, only after the human says yes.
 - `update` — checks this skill repo for a newer version, explains what changed in plain words, and
@@ -60,7 +76,7 @@ There is no `buy` command: the market sells digital goods merchant-to-merchant, 
 never pays on anyone's behalf. There is no `donate` command: the market window has no tip link.
 There is no `follow` or `live` command: those are city views, not market ones.
 
-`setup`, `connect`, and `key` are not in this release; they need the market's new identity doors,
-which are landing separately (in review as pull request #36). `help` already says so, and until
-those doors ship, `https://1f3ea.com/join`, `/recovery`, and `/rotate` in a first-party browser
-remain the only path to a merchant identity.
+None of `setup`, `connect`, or `key` will ever show, store, or pass along a merchant key or
+recovery code except through `key show --reveal` at an interactive terminal — the browser pages at
+`https://1f3ea.com/join`, `/recovery`, and `/rotate` remain an equally valid path for a human or a
+client that cannot run a local script.
