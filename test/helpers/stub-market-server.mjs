@@ -3,9 +3,18 @@
 // implemented in enough detail for scripts/identity-client.mjs and its
 // wrappers (setup/connect/key) to run their real code paths end to end
 // against it -- staging, confirming, promoting a vault entry, revealing (or
-// not) a real secret -- without ever touching the live market. It is not a
-// spec of the real door's behavior; it exists only to give the client
-// something real to talk to.
+// not) a real secret -- without ever touching the live market. Its field
+// validation, refusal shape (a human-worded `error`, a machine-readable
+// `reason`, and the X-1F3EA-Reason header), refusal ordering (shape checked
+// before any credential lookup), and success-response shapes are all
+// deliberately mirrored from the real doors in the market server's own
+// source (src/market-identity-json-routes.ts, src/market-pairing-routes.ts,
+// src/core.ts) -- not invented independently -- because a test that proves
+// the client works against a fictional contract proves nothing about
+// whether it works against the real one. Rate limiting, the exact 64-hex
+// ceremony-token shape, and Postgres-level deadlock retry are NOT modeled:
+// nothing here needs them, and the real client never inspects session/csrf
+// beyond passing back exactly what it was given.
 //
 // Served over HTTPS (with the self-signed localhost fixture cert in
 // test/helpers/fixtures/) because scripts/lib/origin-guard.mjs refuses plain
@@ -23,10 +32,19 @@ const TLS_OPTIONS = {
   cert: readFileSync(join(here, 'fixtures', 'localhost-cert.pem')),
 }
 
+// Matches the real market's credentialShapePattern for these two families
+// (src/core.ts: secret => 'sk_' + 48 hex, recovery_code => 'rc_' + 64 hex)
+// and the handle rule every JSON door enforces (src/core.ts HANDLE_RE).
+const HANDLE_RE = /^[a-z0-9][a-z0-9-]{2,31}$/u
+const CODING_CLIENT_CLASSES = new Set(['coding_persistent', 'coding_ephemeral'])
+const CEREMONY_SECONDS = 900
+const PAIRING_CODE_SECONDS = 10 * 60
+
 const rootKey = () => `1f3ea_sk_${randomBytes(24).toString('hex')}`
 const recoveryCode = () => `1f3ea_rc_${randomBytes(32).toString('hex')}`
 const recoveryCodes = () => Array.from({ length: 8 }, recoveryCode)
-const token = () => randomBytes(16).toString('hex')
+const token = () => randomBytes(32).toString('hex')
+const pairingCode = () => `1f3ea_pc_${randomBytes(24).toString('hex')}`
 
 function readBody(req) {
   return new Promise((resolvePromise, rejectPromise) => {
@@ -43,9 +61,21 @@ function readBody(req) {
   })
 }
 
-function send(res, status, body) {
-  res.writeHead(status, { 'content-type': 'application/json' })
+function send(res, status, body, headers = {}) {
+  res.writeHead(status, { 'content-type': 'application/json', ...headers })
   res.end(JSON.stringify(body))
+}
+
+/**
+ * Mirrors the real doors' fail() (market-identity-json-routes.ts /
+ * market-pairing-routes.ts): a human-worded sentence in `error`, the
+ * machine-readable name in `reason`, and the same name again on the
+ * X-1F3EA-Reason header -- so a test asserting on the client's own printed
+ * refusal message is proving something about a shape the real market
+ * actually returns, not a stub-only convenience string.
+ */
+function fail(res, status, reason, message) {
+  send(res, status, { error: message, reason }, { 'x-1f3ea-reason': reason })
 }
 
 function bearerKey(req) {
@@ -54,37 +84,98 @@ function bearerKey(req) {
   return match ? match[1] : null
 }
 
+/** Object.keys(body) is EXACTLY `allowed`, no more, no fewer -- mirrors exactJsonFields in bounded-json.ts. */
+function exactFields(body, allowed) {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return false
+  const keys = Object.keys(body)
+  if (keys.length !== allowed.length) return false
+  return allowed.every(name => Object.prototype.hasOwnProperty.call(body, name))
+}
+
+function requireFields(res, body, allowed) {
+  if (exactFields(body, allowed)) return true
+  fail(res, 400, 'unexpected_fields', `This action accepts exactly these fields: ${allowed.join(', ')}.`)
+  return false
+}
+
+/**
+ * Mirrors requireClientClass in market-identity-json-routes.ts -- checked
+ * BEFORE any credential lookup on every door that takes both, matching the
+ * real handler order (register stage, rotate begin, recovery generate,
+ * recovery begin all check client_class first) so a test driven against
+ * this stub proves the same refusal-ordering property the real market's own
+ * test suite pins (market-identity-json-routes.test.ts: "register refuses a
+ * browser-only client_class before touching storage").
+ */
+function requireClientClass(res, body) {
+  const clientClass = body.client_class
+  if (typeof clientClass === 'string' && CODING_CLIENT_CLASSES.has(clientClass)) return clientClass
+  fail(
+    res, 400, 'invalid_client_class',
+    'client_class must be "coding_persistent" or "coding_ephemeral". A human without a key-capable ' +
+      'client should use the private browser page instead.',
+  )
+  return null
+}
+
+const REGISTER_STAGE_FIELDS = ['action', 'handle', 'model', 'client_class', 'human_approved']
+const REGISTER_CONFIRM_FIELDS = ['action', 'session', 'csrf', 'merchant_key']
+const REGISTER_CANCEL_FIELDS = ['action', 'session', 'csrf']
+const ROTATE_BEGIN_FIELDS = ['action', 'client_class', 'merchant_key']
+const ROTATE_CONFIRM_FIELDS = ['action', 'session', 'csrf', 'merchant_key']
+const ROTATE_CANCEL_FIELDS = ['action', 'session', 'csrf']
+const RECOVERY_GENERATE_FIELDS = ['action', 'client_class', 'merchant_key']
+const RECOVERY_BEGIN_FIELDS = ['action', 'client_class', 'recovery_code']
+const RECOVERY_CONFIRM_FIELDS = ['action', 'session', 'csrf', 'merchant_key']
+const RECOVERY_CANCEL_FIELDS = ['action', 'session', 'csrf']
+
 /**
  * Starts the stub on an ephemeral localhost port. Returns
  * { origin, merchants, close() }. `merchants` is a live Map keyed by handle
  * (values: { merchant_key, recovery_codes, client_class }) a test can
  * inspect directly after driving a real CLI command against `origin`, or
  * pre-seed before starting a scenario.
+ *
+ * `registerConfirmBarrier` (optional): `{ handle, count }`. When set,
+ * register's 'confirm' action for any session whose staged handle equals
+ * `handle` is held -- not responded to at all -- until `count` such confirm
+ * requests are concurrently outstanding, at which point every held one is
+ * released together. This exists for exactly one caller: the concurrent-
+ * registration race test in test/identity-commands.test.mjs, which needs
+ * its two real subprocesses to genuinely overlap rather than hoping OS
+ * scheduling makes them. 'confirm' is always the LAST network call
+ * register() makes before that process's own local pre-flight vault check
+ * (readSecret, called right after stage() -- see register()'s own comment
+ * in identity-client.mjs) -- so a confirm request reaching this server
+ * already proves that process's own pre-flight check has already run.
+ * Holding every such request until `count` have arrived therefore
+ * guarantees, structurally rather than by luck, that no process can reach
+ * its own vault write before every other racing process has already staged
+ * and pre-flight-checked -- which is the actual overlap the race test means
+ * to exercise. Every other caller of this function omits the option, so it
+ * changes nothing about the ~20 other scenarios sharing this stub.
  */
-export async function startStubMarketServer() {
+export async function startStubMarketServer({ registerConfirmBarrier, pairingUnavailable = false } = {}) {
   const merchants = new Map()
   // Every pending map is keyed by `session` (an opaque value, unrelated to
   // its `csrf` companion) -- mirrors the market's own confirm shape
   // {"action":"confirm","session","csrf","merchant_key"}, which is why this
-  // stub tracks TWO values per pending stage/begin, not city's single
-  // stage_token.
-  const pendingRegistrations = new Map() // session -> { handle, merchant_key, recovery_codes, client_class, csrf }
+  // stub tracks TWO values per pending stage/begin, not a single stage_token.
+  const pendingRegistrations = new Map() // session -> { handle, model, merchant_key, recovery_codes, client_class, csrf }
   const pendingRotations = new Map() // session -> { handle, merchant_key, client_class, csrf }
   const pendingRecoveries = new Map() // session -> { handle, merchant_key, csrf }
+  let confirmBarrierWaiters = []
 
-  function confirmed(pendingMap, body) {
-    const pending = pendingMap.get(body.session)
-    if (!pending || pending.csrf !== body.csrf || pending.merchant_key !== body.merchant_key) return null
-    pendingMap.delete(body.session)
-    return pending
+  function findByKey(map, key) {
+    return [...map.entries()].find(([, value]) => value.merchant_key === key)
   }
 
   const server = createHttpsServer(TLS_OPTIONS, async (req, res) => {
     try {
       if (req.method === 'GET' && req.url === '/api/me') {
         const key = bearerKey(req)
-        const found = [...merchants.entries()].find(([, value]) => value.merchant_key === key)
-        if (!found) return send(res, 401, { error: 'invalid or expired merchant key' })
+        const found = findByKey(merchants, key)
+        if (!found) return send(res, 401, { error: 'bad or missing bearer secret' })
         return send(res, 200, { handle: found[0] })
       }
 
@@ -93,108 +184,261 @@ export async function startStubMarketServer() {
 
       if (req.url === '/api/register') {
         if (body.action === 'stage') {
-          if (merchants.has(body.handle)) {
-            return send(res, 409, { error: `handle "${body.handle}" is already taken`, reason: 'handle_taken' })
+          if (!requireFields(res, body, REGISTER_STAGE_FIELDS)) return
+          const clientClass = requireClientClass(res, body)
+          if (!clientClass) return
+          if (body.human_approved !== true) {
+            return fail(
+              res, 403, 'human_approval_required',
+              'human_approved must be true: a human must approve this permanent public handle before it is created.',
+            )
+          }
+          // Mirrors requireHandleAndModel: model must be PRESENT (an empty
+          // string is fine), never merely truthy -- this is the exact check
+          // whose absence let a model-less registration through before.
+          const handle = typeof body.handle === 'string' ? body.handle.toLowerCase().trim() : null
+          const model = typeof body.model === 'string' ? body.model : null
+          if (!handle || !HANDLE_RE.test(handle) || model === null) {
+            return fail(
+              res, 400, 'invalid_identity',
+              'handle must match ^[a-z0-9][a-z0-9-]{2,31}$ and model (present, "" allowed) must be at most ' +
+                '120 ordinary characters with no directional or control marks.',
+            )
+          }
+          // Real handle_taken is checked against CONFIRMED merchants only
+          // (`EXISTS (SELECT 1 FROM merchants WHERE handle = ...)`), never
+          // against other in-flight stages -- so two concurrent stages for
+          // the same not-yet-confirmed handle can both succeed, and the
+          // race is decided at CONFIRM below, exactly like the real market.
+          if (merchants.has(handle)) {
+            return fail(
+              res, 409, 'handle_taken',
+              `The handle "${handle}" is already taken. Check GET /api/store/${handle} before choosing ` +
+                'another handle; this attempt created nothing.',
+            )
           }
           const session = token()
           const entry = {
-            handle: body.handle,
-            merchant_key: rootKey(),
-            recovery_codes: recoveryCodes(),
-            client_class: body.client_class,
-            csrf: token(),
+            handle, model, client_class: clientClass, merchant_key: rootKey(),
+            recovery_codes: recoveryCodes(), csrf: token(),
           }
           pendingRegistrations.set(session, entry)
-          return send(res, 200, { ...entry, session })
+          return send(res, 200, {
+            status: 'staged', handle: entry.handle, client_class: entry.client_class,
+            session, csrf: entry.csrf, expires_in_seconds: CEREMONY_SECONDS,
+            merchant_key: entry.merchant_key, recovery_codes: entry.recovery_codes,
+            instructions: 'Save the merchant key and all eight recovery codes now; confirm or cancel within the window.',
+          })
         }
         if (body.action === 'confirm') {
-          const pending = confirmed(pendingRegistrations, body)
-          if (!pending) return send(res, 403, { error: 'session, csrf, or merchant key mismatch' })
+          if (!requireFields(res, body, REGISTER_CONFIRM_FIELDS)) return
+          const pending = pendingRegistrations.get(body.session)
+          if (!pending || pending.csrf !== body.csrf) {
+            return fail(
+              res, 403, 'request_unavailable',
+              'This registration expired, was canceled, or already advanced. Stage a fresh registration; check ' +
+                'GET /api/merchants first in case an earlier confirm response was lost.',
+            )
+          }
+          if (pending.merchant_key !== body.merchant_key) {
+            return fail(res, 403, 'credential_rejected', 'That saved merchant key could not be verified. Check it and retry confirm.')
+          }
+          if (registerConfirmBarrier && pending.handle === registerConfirmBarrier.handle) {
+            // Synchronous (no `await` between push and the length check) --
+            // Node's single-threaded event loop means no other request's
+            // handler can interleave here, so two concurrent confirms can
+            // never both observe a stale waiters length and both release.
+            await new Promise(releaseThis => {
+              confirmBarrierWaiters.push(releaseThis)
+              if (confirmBarrierWaiters.length >= registerConfirmBarrier.count) {
+                const waiters = confirmBarrierWaiters
+                confirmBarrierWaiters = []
+                for (const release of waiters) release()
+              }
+            })
+          }
+          pendingRegistrations.delete(body.session)
+          if (merchants.has(pending.handle)) {
+            // Another registration for the same handle confirmed first,
+            // between this one staging and this confirm arriving -- mirrors
+            // the real confirm's own separate handle_taken check.
+            return fail(
+              res, 409, 'handle_taken',
+              'That handle was taken by another registration before this one confirmed. This losing key and ' +
+                'its recovery codes are inactive. Check GET /api/merchants before choosing another handle.',
+            )
+          }
           merchants.set(pending.handle, {
-            merchant_key: pending.merchant_key,
-            recovery_codes: pending.recovery_codes,
-            client_class: pending.client_class,
+            merchant_key: pending.merchant_key, recovery_codes: pending.recovery_codes, client_class: pending.client_class,
           })
-          return send(res, 200, { handle: pending.handle, merchant_id: merchants.size })
+          return send(res, 200, { status: 'confirmed', merchant_id: merchants.size, handle: pending.handle })
         }
         if (body.action === 'cancel') {
+          if (!requireFields(res, body, REGISTER_CANCEL_FIELDS)) return
+          const pending = pendingRegistrations.get(body.session)
+          if (!pending || pending.csrf !== body.csrf) {
+            return fail(res, 403, 'request_unavailable', 'No staged registration is waiting for this session and csrf.')
+          }
           pendingRegistrations.delete(body.session)
-          return send(res, 200, { status: 'cancelled' })
+          return send(res, 200, { status: 'canceled' })
         }
-        return send(res, 400, { error: `unknown register action "${body.action}"` })
+        return fail(res, 400, 'invalid_action', 'action must be one of: stage, confirm, cancel.')
       }
 
       if (req.url === '/api/rotate') {
         if (body.action === 'begin') {
-          const found = [...merchants.entries()].find(([, value]) => value.merchant_key === body.merchant_key)
-          if (!found) return send(res, 403, { error: 'credential_rejected' })
-          if (body.client_class !== 'coding_persistent' && body.client_class !== 'coding_ephemeral') {
-            return send(res, 400, { error: 'client_class must be coding_persistent or coding_ephemeral' })
-          }
+          if (!requireFields(res, body, ROTATE_BEGIN_FIELDS)) return
+          // Shape (client_class) before credential (merchant_key) -- matches
+          // the real rotateBegin's own check order (requireClientClass runs
+          // before requireMerchantKey), so a bad key never even gets looked
+          // up when client_class is also invalid.
+          const clientClass = requireClientClass(res, body)
+          if (!clientClass) return
+          const found = findByKey(merchants, body.merchant_key)
+          if (!found) return fail(res, 403, 'credential_rejected', 'That current merchant key could not be verified. Check it and retry.')
           const session = token()
-          const entry = { handle: found[0], merchant_key: rootKey(), client_class: body.client_class, csrf: token() }
+          const entry = { handle: found[0], merchant_key: rootKey(), client_class: clientClass, csrf: token() }
           pendingRotations.set(session, entry)
-          return send(res, 200, { ...entry, session })
+          return send(res, 200, {
+            status: 'staged', handle: entry.handle, client_class: entry.client_class,
+            session, csrf: entry.csrf, expires_in_seconds: CEREMONY_SECONDS, merchant_key: entry.merchant_key,
+            instructions: 'This replacement merchant key is shown exactly once. Confirm or cancel within the window.',
+          })
         }
         if (body.action === 'confirm') {
-          const pending = confirmed(pendingRotations, body)
-          if (!pending) return send(res, 403, { error: 'session, csrf, or merchant key mismatch' })
+          if (!requireFields(res, body, ROTATE_CONFIRM_FIELDS)) return
+          const pending = pendingRotations.get(body.session)
+          if (!pending || pending.csrf !== body.csrf) {
+            return fail(
+              res, 403, 'request_unavailable',
+              'This rotation expired, was canceled, or the merchant changed since it was staged. Begin a fresh rotation with the current key.',
+            )
+          }
+          if (pending.merchant_key !== body.merchant_key) {
+            return fail(res, 403, 'credential_rejected', 'That saved replacement merchant key could not be verified. Check it and retry confirm.')
+          }
+          pendingRotations.delete(body.session)
           const merchant = merchants.get(pending.handle)
           // The real door invalidates every recovery code the moment a
           // rotation confirms -- simulated here by clearing them, so a
           // test can assert the client never claims stale codes survived.
           merchants.set(pending.handle, {
-            ...merchant,
-            merchant_key: pending.merchant_key,
-            client_class: pending.client_class,
-            recovery_codes: [],
+            ...merchant, merchant_key: pending.merchant_key, client_class: pending.client_class, recovery_codes: [],
           })
-          return send(res, 200, { handle: pending.handle })
+          return send(res, 200, { status: 'rotated', merchant_id: 1, handle: pending.handle })
         }
         if (body.action === 'cancel') {
+          if (!requireFields(res, body, ROTATE_CANCEL_FIELDS)) return
+          const pending = pendingRotations.get(body.session)
+          if (!pending || pending.csrf !== body.csrf) {
+            return fail(res, 403, 'request_unavailable', 'No staged rotation is waiting for this session and csrf.')
+          }
           pendingRotations.delete(body.session)
-          return send(res, 200, { status: 'cancelled' })
+          return send(res, 200, { status: 'canceled' })
         }
-        return send(res, 400, { error: `unknown rotate action "${body.action}"` })
+        return fail(res, 400, 'invalid_action', 'action must be one of: begin, confirm, cancel.')
       }
 
       if (req.url === '/api/recovery') {
         if (body.action === 'generate') {
-          const found = [...merchants.entries()].find(([, value]) => value.merchant_key === body.merchant_key)
-          if (!found) return send(res, 403, { error: 'credential_rejected' })
+          if (!requireFields(res, body, RECOVERY_GENERATE_FIELDS)) return
+          const clientClass = requireClientClass(res, body)
+          if (!clientClass) return
+          const found = findByKey(merchants, body.merchant_key)
+          if (!found) return fail(res, 403, 'credential_rejected', 'That merchant key could not be verified. Check it and retry.')
           const codes = recoveryCodes()
           merchants.set(found[0], { ...found[1], recovery_codes: codes })
-          return send(res, 200, { handle: found[0], recovery_codes: codes })
+          return send(res, 200, {
+            status: 'generated', handle: found[0], merchant_id: 1, generation: 1, client_class: clientClass,
+            recovery_codes: codes,
+            instructions: 'These eight recovery codes are shown exactly once and replace every earlier set immediately.',
+          })
         }
         if (body.action === 'begin') {
+          if (!requireFields(res, body, RECOVERY_BEGIN_FIELDS)) return
+          const clientClass = requireClientClass(res, body)
+          if (!clientClass) return
           const found = [...merchants.entries()].find(([, value]) => value.recovery_codes?.includes(body.recovery_code))
-          if (!found) return send(res, 403, { error: 'credential_rejected' })
+          if (!found) {
+            return fail(
+              res, 403, 'credential_rejected',
+              'That recovery code could not be verified, was already used, or belongs to a superseded set.',
+            )
+          }
           const session = token()
           const entry = { handle: found[0], merchant_key: rootKey(), csrf: token() }
           pendingRecoveries.set(session, entry)
-          return send(res, 200, { ...entry, session })
+          return send(res, 200, {
+            status: 'staged', handle: entry.handle, client_class: clientClass,
+            session, csrf: entry.csrf, expires_in_seconds: CEREMONY_SECONDS, merchant_key: entry.merchant_key,
+            instructions: 'This replacement merchant key is shown exactly once. Confirm or cancel within the window.',
+          })
         }
         if (body.action === 'confirm') {
-          const pending = confirmed(pendingRecoveries, body)
-          if (!pending) return send(res, 403, { error: 'session, csrf, or merchant key mismatch' })
+          if (!requireFields(res, body, RECOVERY_CONFIRM_FIELDS)) return
+          const pending = pendingRecoveries.get(body.session)
+          if (!pending || pending.csrf !== body.csrf) {
+            return fail(
+              res, 403, 'request_unavailable',
+              'This recovery expired, was canceled, or the merchant changed since it was staged. Begin a fresh recovery with an unused code.',
+            )
+          }
+          if (pending.merchant_key !== body.merchant_key) {
+            return fail(res, 403, 'credential_rejected', 'That saved replacement merchant key could not be verified. Check it and retry confirm.')
+          }
+          pendingRecoveries.delete(body.session)
           const merchant = merchants.get(pending.handle)
           merchants.set(pending.handle, { ...merchant, merchant_key: pending.merchant_key, recovery_codes: [] })
-          return send(res, 200, { handle: pending.handle })
+          return send(res, 200, { status: 'recovered', merchant_id: 1, handle: pending.handle })
         }
         if (body.action === 'cancel') {
+          if (!requireFields(res, body, RECOVERY_CANCEL_FIELDS)) return
+          const pending = pendingRecoveries.get(body.session)
+          if (!pending || pending.csrf !== body.csrf) {
+            return fail(res, 403, 'request_unavailable', 'No staged recovery is waiting for this session and csrf.')
+          }
           pendingRecoveries.delete(body.session)
-          return send(res, 200, { status: 'cancelled' })
+          return send(res, 200, { status: 'canceled' })
         }
-        return send(res, 400, { error: `unknown recovery action "${body.action}"` })
+        return fail(res, 400, 'invalid_action', 'action must be one of: generate, begin, confirm, cancel.')
       }
 
       if (req.url === '/api/pair') {
         const key = bearerKey(req)
-        const found = [...merchants.entries()].find(([, value]) => value.merchant_key === key)
-        if (!found) return send(res, 401, { error: 'invalid or expired merchant key' })
+        const found = findByKey(merchants, key)
+        if (!found) {
+          return fail(
+            res, 401, 'auth_required',
+            'Send Authorization: Bearer <merchant_key> for the merchant this pairing code should link.',
+          )
+        }
+        // Real door: a body may be omitted OR must be exactly `{}` -- never
+        // any other fields, since the credential is the bearer header, not
+        // the body.
+        if (req.headers['content-type'] && !exactFields(body, [])) {
+          return fail(
+            res, 400, 'unexpected_fields',
+            'This door takes its credential only from Authorization: Bearer <merchant_key>. Send no request ' +
+              'body, or an empty JSON object.',
+          )
+        }
+        if (pairingUnavailable) {
+          return fail(
+            res, 503, 'pairing_unavailable',
+            'The hosted connector sign-in door is not enabled on this deployment, so a pairing code would ' +
+              'have nowhere to be redeemed. No code was issued.',
+          )
+        }
+        const code = pairingCode()
         return send(res, 200, {
-          pairing_code: `pair-${token()}`,
-          expires_at: new Date(Date.now() + 600_000).toISOString(),
+          status: 'created',
+          pairing_code: code,
+          expires_in_seconds: PAIRING_CODE_SECONDS,
+          expires_at: new Date(Date.now() + PAIRING_CODE_SECONDS * 1000).toISOString(),
+          one_use: true,
+          instructions:
+            'Shown exactly once. Within 10 minutes, have the human enter this code -- instead of the merchant ' +
+            'key -- on the "I already have a store" panel of the hosted connector sign-in page.',
         })
       }
 
