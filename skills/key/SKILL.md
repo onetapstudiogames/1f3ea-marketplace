@@ -1,6 +1,6 @@
 ---
 name: key
-description: "Check whether your stored market key still works (status), rotate it, recover a lost one, adopt one stranded under a registration staging label, or show it with explicit --reveal at an interactive terminal. Use when the user asks about their merchant key, rotating, recovering, or types /1f3ea-marketplace:key."
+description: "Check whether your stored market key still works (status), rotate it, recover a lost one, adopt one stranded under a staging label, or show it with explicit --reveal at an interactive terminal. Use when the user asks about their merchant key, rotating, recovering, or types /1f3ea-marketplace:key."
 ---
 
 # key
@@ -42,14 +42,22 @@ only when explicitly told to reveal.
 - **`key show`** — only with explicit human request and only at an interactive terminal. Run
   `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" show --reveal [--handle <handle>]`. Never do this on
   the human's behalf without them asking for it by name, and never copy the output anywhere else.
-- **`key adopt`** — only when `setup` itself refuses with a registration-staging message: a past
-  run's own vault promotion failed after the market already confirmed the merchant server-side, so
-  the confirmed key sits only under a staging label that refusal names. Run
+- **`key adopt`** — only when a past run's own vault promotion failed after the market already
+  confirmed a merchant server-side, so the confirmed key sits only under a staging label instead
+  of its real handle. `setup`'s registration-staging refusal names this exact command and label,
+  and so do `rotate`'s and `recover begin`'s own stranded-key messages (an unreadable existing
+  entry, a failed final write, or a timed-out per-handle lock) — adopt works from any of the
+  three, not registration alone. Run
   `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" adopt --handle <the base handle> --from-label <the exact staging label the refusal named>`
   and print its output verbatim. It reads the staged key, probes `GET /api/me` with it (the same
   disclosed authenticated read every other command here runs), refuses outright unless that probe
-  actually authenticates as `--handle`, and only then stores it under that real handle and deletes
-  the staging copy — never printing the key itself.
+  actually authenticates as `--handle`. If something also already lives under `--handle`, it probes
+  that too: a live entry that still authenticates leaves both copies as working keys, and adopt
+  refuses to pick one — read both (`key show --handle <handle> --reveal` and `key show --handle
+  <staging label> --reveal`) before deleting either; a live entry that does NOT authenticate is
+  the shape a stranded rotation or recovery leaves, and adopt promotes the staged key over it.
+  Either way, only the staging copy is ever deleted, and only once the real handle actually holds
+  the working key — never printing the key itself.
 
 Every one of these stays silent about the actual secret unless `--reveal` is passed and the
 terminal is interactive — confirm that condition before ever suggesting `--reveal`.

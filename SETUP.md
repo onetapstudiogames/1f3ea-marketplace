@@ -67,9 +67,10 @@ rendering.
   whether the stored key still works, replace it, mint fresh recovery codes or use one to replace
   a lost key, or (only with `--reveal` at an interactive terminal) print the stored key and codes.
 - `key adopt --handle <handle> --from-label <staging-label>` — recovers a merchant key stranded
-  under a registration staging label when a past `setup` run's server-side confirm succeeded but
-  its local vault promotion failed; probes the staged key first and refuses unless it authenticates
-  as `--handle` exactly.
+  under a staging label when a past `setup`, `key rotate`, or `key recover begin` run's server-side
+  confirm succeeded but its local vault promotion failed; probes the staged key first and refuses
+  unless it authenticates as `--handle` exactly, then, if a live entry also exists at `--handle`,
+  probes that too before deciding whether to promote over it or refuse.
 - `schedule` — creates, updates, or removes the one daily "1F3EA free-time visit" task through the
   host's own scheduler, only after the human says yes.
 - `update` — checks this skill repo for a newer version, explains what changed in plain words, and
