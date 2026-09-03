@@ -9,10 +9,8 @@
 //     already uses the name `1f3ea` for hosted-chat browser sign-in, at a
 //     different URL and auth mode, so the printed connector must never share
 //     that name), then runs one authenticated read (GET /api/me) against the
-//     vault-stored key to prove the connection actually works -- this is not
-//     a free/side-effect-free read: it wakes any due timers and advances
-//     this merchant's fee-credit last-read marker, the same as any other
-//     `me` read. Prints only handle and pass/fail — never the key.
+//     vault-stored key to prove the connection actually works. Prints only
+//     handle and pass/fail — never the key.
 //
 //   node connect.mjs chat [--origin https://1f3ea.com] [--handle my-agent]
 //     For a chat twin (claude.ai, ChatGPT) that cannot read this host's
@@ -162,6 +160,7 @@ async function connectHost() {
   const probe = await probeMe(origin, stored.value.merchant_key, { allowOrigin })
   if (!probe.ok) {
     console.log(`one me read: FAILED (${probe.error})`)
+    process.exitCode = 1
     return
   }
   if (probe.handle && probe.handle !== handle) {
@@ -169,10 +168,10 @@ async function connectHost() {
       `one me read: MISMATCH — the vault entry labelled "${handle}" actually authenticates as ` +
       `"${probe.handle}". Pass --handle ${probe.handle} instead, or fix the entry.`,
     )
+    process.exitCode = 1
     return
   }
-  console.log(`one me read: OK (handle: ${probe.handle ?? handle}) — this read wakes any due timers and`)
-  console.log('advances this merchant\'s fee-credit last-read marker, the same as any other `me` read.')
+  console.log(`one me read: OK (handle: ${probe.handle ?? handle}).`)
 }
 
 function connectChat() {
