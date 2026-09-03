@@ -21,12 +21,18 @@
 // last line of defense, not a replacement for passing `homeDir` correctly
 // at each call site: it cannot say WHICH test leaked, only THAT one did.
 
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { readdirSync, statSync } from 'node:fs'
-import { homedir } from 'node:os'
+import { homedir, platform } from 'node:os'
 import { join, relative } from 'node:path'
+import { parseKeychainServiceNames } from './identity-client.mjs'
 
 const VAULT_DIR_NAME = '.1f3ea'
+
+// The plugin's own OS-vault target/service prefix (identity-client.mjs's own
+// vaultTarget: `1f3ea:${origin}:${label}`) -- used below to scan the REAL
+// platform vault by NAME only, never by value.
+const VAULT_TARGET_PREFIX = '1f3ea:'
 
 /**
  * A deterministic, content-free snapshot of `dir`: every regular file's
@@ -105,8 +111,96 @@ function formatDiff(diff, before, after) {
   return lines.join('\n')
 }
 
+/**
+ * A deterministic, NAME-ONLY snapshot of this host's real OS credential
+ * vault entries carrying the plugin's own `1f3ea:` target/service prefix --
+ * via `cmdkey /list` on win32, the same `security dump-keychain` metadata
+ * scan identity-client.mjs's own listVaultLabels uses on darwin (never `-d`,
+ * which would also dump every item's secret data). This exists for exactly
+ * the reason the directory snapshot above does not cover: on win32 and
+ * darwin, storeSecret writes the SECRET itself to the machine-wide platform
+ * vault regardless of an injected `homeDir` -- only the non-secret
+ * vault-index.json under `homeDir` is redirected by that override -- so a
+ * test that stores a real credential without stubbing out the platform
+ * vault call entirely can leak a secret bundle into the operator's real
+ * Credential Manager or Keychain while the directory snapshot above sees
+ * nothing at all. `{ supported: false }` on every other platform (the file
+ * backend has no separate OS-level store; the directory snapshot alone
+ * already covers it), and on a `cmdkey`/`security` failure, so a
+ * platform this cannot scan never reports a false drift.
+ */
+function snapshotPlatformVaultTargets() {
+  const os = platform()
+  if (os === 'win32') {
+    let output
+    try {
+      output = execFileSync('cmdkey', ['/list'], { encoding: 'utf8' })
+    } catch {
+      return { supported: false, names: [] }
+    }
+    const names = []
+    for (const match of output.matchAll(/Target:\s*(.+)\s*$/gmu)) {
+      // Real `cmdkey /list` output prefixes the target this script wrote
+      // with its own credential-type marker (observed as
+      // "LegacyGeneric:target=1f3ea:<origin>:<label>", not the bare target)
+      // -- same as identity-client.mjs's own listVaultLabels win32 branch --
+      // so search for the prefix anywhere in the line rather than requiring
+      // it at the very start.
+      const target = match[1].trim()
+      const index = target.indexOf(VAULT_TARGET_PREFIX)
+      if (index !== -1) names.push(target.slice(index))
+    }
+    names.sort()
+    return { supported: true, names }
+  }
+  if (os === 'darwin') {
+    let output
+    try {
+      output = execFileSync('security', ['dump-keychain'], {
+        encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: 10_000,
+      })
+    } catch {
+      return { supported: false, names: [] }
+    }
+    const names = parseKeychainServiceNames(output)
+      .filter(name => name.startsWith(VAULT_TARGET_PREFIX))
+      .sort()
+    return { supported: true, names }
+  }
+  return { supported: false, names: [] }
+}
+
+function diffTargetNames(before, after) {
+  const beforeSet = new Set(before.names)
+  const afterSet = new Set(after.names)
+  return {
+    added: after.names.filter(name => !beforeSet.has(name)),
+    removed: before.names.filter(name => !afterSet.has(name)),
+  }
+}
+
+function isTargetDrift(diff) {
+  return diff.added.length > 0 || diff.removed.length > 0
+}
+
+function formatTargetDiff(diff) {
+  const lines = [`this host's real OS credential vault entries under the "${VAULT_TARGET_PREFIX}" prefix changed during this test run`]
+  for (const name of diff.added) lines.push(`  + ${name}`)
+  for (const name of diff.removed) lines.push(`  - ${name}`)
+  lines.push(
+    'This means some test wrote to (or deleted from) the REAL platform vault -- Windows Credential Manager or ' +
+    'macOS Keychain -- instead of a sandboxed one: on these platforms an injected `homeDir` redirects only the ' +
+    'non-secret vault-index.json, never the secret bundle itself, so a call that skips stubbing the platform ' +
+    'vault call entirely leaks a real credential even though the directory diff above sees nothing. Find the ' +
+    'call site (search test/*.test.mjs for a vault function call that reaches the real platform backend) and ' +
+    'fix it there. Names only, above and in this message -- never values.',
+  )
+  return lines.join('\n')
+}
+
 const vaultDir = join(homedir(), VAULT_DIR_NAME)
 const before = snapshotDir(vaultDir)
+const targetsBefore = snapshotPlatformVaultTargets()
 
 const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2)], {
   stdio: 'inherit',
@@ -114,9 +208,15 @@ const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2)],
 
 const after = snapshotDir(vaultDir)
 const diff = diffSnapshots(before, after)
+const targetsAfter = snapshotPlatformVaultTargets()
+const targetDiff = diffTargetNames(targetsBefore, targetsAfter)
+const targetsComparable = targetsBefore.supported && targetsAfter.supported
 
 if (isDrift(diff)) {
   console.error(`\nidentity-vault-home-guard: ${formatDiff(diff, before, after)}`)
+  process.exitCode = 1
+} else if (targetsComparable && isTargetDrift(targetDiff)) {
+  console.error(`\nidentity-vault-home-guard: ${formatTargetDiff(targetDiff)}`)
   process.exitCode = 1
 } else if (result.status !== 0) {
   process.exitCode = result.status ?? 1
