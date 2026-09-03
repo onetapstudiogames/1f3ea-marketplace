@@ -705,13 +705,13 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
   test(
     `listVaultLabels (${backendPlatform}): a bundle discoverable with no index entry at all still falls back to the suffix guess`,
     // Meaningful only where a label can be discovered by something other
-    // than the index itself: the file backend discovers labels by
-    // reading the credentials directory, and win32 additionally unions a
-    // real cmdkey scrape. On darwin, listVaultLabels has no such
-    // alternate source -- an unindexed label is not discoverable at all,
-    // so this scenario collapses into "nothing enumerated" for a reason
-    // unrelated to the staging marker and is not worth asserting here.
-    { skip: skip || backendPlatform === 'darwin' },
+    // than the index itself: the file backend discovers labels by reading
+    // the credentials directory, win32 additionally unions a real cmdkey
+    // scrape, and darwin (since the dump-keychain union added earlier in
+    // this same PR -- see listVaultLabels' own 'darwin' branch and the
+    // "enumerates the Keychain itself via dump-keychain" test above) unions
+    // a real `security dump-keychain` scrape the same way.
+    { skip },
     async () => {
       const homeDir = await mkdtemp(join(tmpdir(), `identity-client-legacy-staging-${backendPlatform}-`))
       try {
@@ -730,6 +730,21 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
             `${JSON.stringify({ kind: 'merchant', handle: 'agent-abandoned', origin })}\n`,
           )
           deps = { platform: backendPlatform, homeDir, execFileSync: () => '' }
+        } else if (backendPlatform === 'darwin') {
+          // darwin: discoverable only via the dump-keychain scrape, same
+          // "svce"<blob>= shape as the "enumerates the Keychain itself"
+          // test above (a real merchant found only that way must not be
+          // dropped just because the index never recorded it).
+          deps = {
+            platform: backendPlatform,
+            homeDir,
+            execFileSync: (command, args) => {
+              if (command === 'security' && args[0] === 'dump-keychain') {
+                return `    "svce"<blob>="1f3ea:${origin}:${label}"`
+              }
+              throw new Error(`unexpected exec call: ${command} ${args.join(' ')}`)
+            },
+          }
         } else {
           // win32: discoverable only via the cmdkey scrape (a real merchant
           // found only that way must not be dropped just because the index

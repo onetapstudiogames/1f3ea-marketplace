@@ -244,7 +244,21 @@ const RECOVERY_CANCEL_FIELDS = ['action', 'session', 'csrf']
  * this stub.
  */
 const REGISTER_CONFIRM_BARRIER_TIMEOUT_MS = 10_000
-export async function startStubMarketServer({ registerConfirmBarrier, pairingUnavailable = false } = {}) {
+/**
+ * rotateConfirmHandleOverride / recoveryConfirmHandleOverride (round-4
+ * review, MEDIUM finding): when set, the `handle` field in the /api/rotate
+ * or /api/recovery `confirm` RESPONSE is this value instead of the honestly
+ * staged `pending.handle` -- simulating a rogue market that names one handle
+ * on begin and a different one on confirm (or embeds a newline in it), while
+ * everything this stub actually stores server-side stays keyed by the real,
+ * honestly-staged handle, exactly like a real confirm response is the only
+ * thing an attacker-controlled door could lie about. Every other caller
+ * omits both options, so this changes nothing about the ~20 other scenarios
+ * sharing this stub.
+ */
+export async function startStubMarketServer({
+  registerConfirmBarrier, pairingUnavailable = false, rotateConfirmHandleOverride, recoveryConfirmHandleOverride,
+} = {}) {
   const merchants = new Map()
   // Every pending map is keyed by `session` (an opaque value, unrelated to
   // its `csrf` companion) -- mirrors the market's own confirm shape
@@ -441,7 +455,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
           merchants.set(pending.handle, {
             ...merchant, merchant_key: pending.merchant_key, client_class: pending.client_class, recovery_codes: [],
           })
-          return send(res, 200, { status: 'rotated', merchant_id: 1, handle: pending.handle })
+          return send(res, 200, { status: 'rotated', merchant_id: 1, handle: rotateConfirmHandleOverride ?? pending.handle })
         }
         if (body.action === 'cancel') {
           if (!requireFields(res, body, ROTATE_CANCEL_FIELDS)) return
@@ -508,7 +522,7 @@ export async function startStubMarketServer({ registerConfirmBarrier, pairingUna
           pendingRecoveries.delete(body.session)
           const merchant = merchants.get(pending.handle)
           merchants.set(pending.handle, { ...merchant, merchant_key: pending.merchant_key, recovery_codes: [] })
-          return send(res, 200, { status: 'recovered', merchant_id: 1, handle: pending.handle })
+          return send(res, 200, { status: 'recovered', merchant_id: 1, handle: recoveryConfirmHandleOverride ?? pending.handle })
         }
         if (body.action === 'cancel') {
           if (!requireFields(res, body, RECOVERY_CANCEL_FIELDS)) return

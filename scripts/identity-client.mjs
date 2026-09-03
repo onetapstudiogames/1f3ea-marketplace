@@ -1477,13 +1477,17 @@ async function register(flags) {
     // this function that cancels the stage before refusing.
     await cancelStage(origin, '/api/register', staged.session, staged.csrf)
     throw new Error(
-      `refusing to store or print the handle "${finalHandle}" the market confirmed for this registration: it ` +
-      `does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" ` +
-      'sequence this script uses for its own in-flight staging labels. The merchant was already created ' +
-      'server-side under that exact spelling, and its confirmed merchant key and recovery codes were NOT ' +
-      `lost -- they are still stored under the staging label "${stagingLabel}" and nowhere else. Read them ` +
-      `back from "${stagingLabel}" and store them under a label of your choosing yourself; this script will ` +
-      'not do so automatically for a handle that fails its own naming rule.',
+      // finalHandle is JSON.stringify'd (not wrapped in manual quotes) because
+      // it has, by definition in this branch, just failed HANDLE_RE -- it may
+      // contain a newline or quote that could otherwise fabricate an extra
+      // line in output the key skill instructs the agent to relay verbatim.
+      `refusing to store or print the handle ${JSON.stringify(finalHandle)} the market confirmed for this ` +
+      `registration: it does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved ` +
+      '"--pending-" sequence this script uses for its own in-flight staging labels. The merchant was already ' +
+      'created server-side under that exact spelling, and its confirmed merchant key and recovery codes were ' +
+      `NOT lost -- they are still stored under the staging label "${stagingLabel}" and nowhere else. Read ` +
+      `them back from "${stagingLabel}" and store them under a label of your choosing yourself; this script ` +
+      'will not do so automatically for a handle that fails its own naming rule.',
     )
   }
 
@@ -1549,10 +1553,15 @@ async function rotate(flags) {
   if (!HANDLE_RE.test(staged.handle) || RESERVED_HANDLE_SUBSTRING_RE.test(staged.handle)) {
     await cancelStage(origin, '/api/rotate', staged.session, staged.csrf)
     throw new Error(
-      `refusing to act on the handle "${staged.handle}" this rotation's begin call named: it does not match ` +
-      `the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" sequence this script ` +
-      'uses for its own in-flight staging labels. The rotation was cancelled before anything was written to ' +
-      'this vault; the OLD key is still the live, valid one.',
+      // staged.handle is JSON.stringify'd (not wrapped in manual quotes)
+      // because it has, by definition in this branch, just failed HANDLE_RE
+      // -- it may contain a newline or quote that could otherwise fabricate
+      // an extra line in output the key skill instructs the agent to relay
+      // verbatim.
+      `refusing to act on the handle ${JSON.stringify(staged.handle)} this rotation's begin call named: it ` +
+      `does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" ` +
+      'sequence this script uses for its own in-flight staging labels. The rotation was cancelled before ' +
+      'anything was written to this vault; the OLD key is still the live, valid one.',
     )
   }
 
@@ -1603,8 +1612,29 @@ async function rotate(flags) {
     recovery_codes_invalidated_at: new Date().toISOString(),
   }))
 
+  // Print the already-validated staged.handle -- the label this rotation
+  // actually just wrote to, two lines up -- never the confirm response's own
+  // (unvalidated) `handle` field. Unlike staged.handle above, `confirmed`
+  // here has never been checked against HANDLE_RE at all, so printing it raw
+  // would both let an embedded newline fabricate extra `handle:`/`stored:`
+  // lines in output the key skill relays verbatim, AND -- even when it is a
+  // well-formed handle -- risk naming a merchant that was never actually
+  // touched, if a server names one handle on begin and a different one on
+  // confirm. The write already happened under staged.handle by the time this
+  // runs, so a mismatch can only be reported, never undone; JSON.stringify
+  // keeps that report itself from being another injection vector.
+  if (typeof confirmed.handle === 'string' && confirmed.handle !== staged.handle) {
+    throw new Error(
+      `this rotation's confirm call named a different handle (${JSON.stringify(confirmed.handle)}) than its ` +
+      `own begin call staged (${JSON.stringify(staged.handle)}). The replacement key and invalidated-codes ` +
+      `marker are already written -- that cannot be undone -- under the STAGED handle, at "${location}". ` +
+      `Nothing was written under ${JSON.stringify(confirmed.handle)}. Verify the vault entry at "${location}" ` +
+      'by hand before trusting it, and treat this rotation as unconfirmed until you do.',
+    )
+  }
+
   revealOrHide(flags, 'Replacement merchant key', [staged.merchant_key])
-  console.log(`handle: ${confirmed.handle}`)
+  console.log(`handle: ${staged.handle}`)
   console.log(`stored: ${location}`)
   console.log(
     'your recovery codes were invalidated by this rotation (the market invalidates every recovery code on ' +
@@ -1648,8 +1678,13 @@ async function recoverGenerate(flags) {
   // generation itself.
   if (!HANDLE_RE.test(generated.handle) || RESERVED_HANDLE_SUBSTRING_RE.test(generated.handle)) {
     throw new Error(
-      `refusing to store the recovery codes the market minted under the handle "${generated.handle}": it ` +
-      `does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" ` +
+      // generated.handle is JSON.stringify'd (not wrapped in manual quotes)
+      // because it has, by definition in this branch, just failed HANDLE_RE
+      // -- it may contain a newline or quote that could otherwise fabricate
+      // an extra line in output the key skill instructs the agent to relay
+      // verbatim.
+      `refusing to store the recovery codes the market minted under the handle ${JSON.stringify(generated.handle)}: ` +
+      `it does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" ` +
       'sequence this script uses for its own in-flight staging labels. The market already generated new ' +
       'codes server-side for that handle -- this refusal only means they were never written to this vault.',
     )
@@ -1765,10 +1800,15 @@ async function recoverBegin(flags) {
   if (!HANDLE_RE.test(staged.handle) || RESERVED_HANDLE_SUBSTRING_RE.test(staged.handle)) {
     await cancelStage(origin, '/api/recovery', staged.session, staged.csrf)
     throw new Error(
-      `refusing to act on the handle "${staged.handle}" this recovery's begin call named: it does not match ` +
-      `the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" sequence this script ` +
-      'uses for its own in-flight staging labels. The recovery was cancelled before anything was written to ' +
-      'this vault; the OLD key is still the live, valid one.',
+      // staged.handle is JSON.stringify'd (not wrapped in manual quotes)
+      // because it has, by definition in this branch, just failed HANDLE_RE
+      // -- it may contain a newline or quote that could otherwise fabricate
+      // an extra line in output the key skill instructs the agent to relay
+      // verbatim.
+      `refusing to act on the handle ${JSON.stringify(staged.handle)} this recovery's begin call named: it ` +
+      `does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved "--pending-" ` +
+      'sequence this script uses for its own in-flight staging labels. The recovery was cancelled before ' +
+      'anything was written to this vault; the OLD key is still the live, valid one.',
     )
   }
 
@@ -1808,8 +1848,26 @@ async function recoverBegin(flags) {
     recovery_codes_invalidated_at: new Date().toISOString(),
   }))
 
+  // Print the already-validated staged.handle -- the label this recovery
+  // actually just wrote to, two lines up -- never the confirm response's own
+  // (unvalidated) `handle` field. See rotate()'s identical check above for
+  // why: `confirmed` here has never been checked against HANDLE_RE, so
+  // printing it raw would both let an embedded newline fabricate extra
+  // output lines and, even when well-formed, risk naming a merchant that was
+  // never actually touched. The write already happened under staged.handle
+  // by the time this runs, so a mismatch can only be reported, never undone.
+  if (typeof confirmed.handle === 'string' && confirmed.handle !== staged.handle) {
+    throw new Error(
+      `this recovery's confirm call named a different handle (${JSON.stringify(confirmed.handle)}) than its ` +
+      `own begin call staged (${JSON.stringify(staged.handle)}). The replacement key and invalidated-codes ` +
+      `marker are already written -- that cannot be undone -- under the STAGED handle, at "${location}". ` +
+      `Nothing was written under ${JSON.stringify(confirmed.handle)}. Verify the vault entry at "${location}" ` +
+      'by hand before trusting it, and treat this recovery as unconfirmed until you do.',
+    )
+  }
+
   revealOrHide(flags, 'Replacement merchant key', [staged.merchant_key])
-  console.log(`handle: ${confirmed.handle}`)
+  console.log(`handle: ${staged.handle}`)
   console.log(`stored: ${location}`)
   console.log(
     'every remaining recovery code was invalidated by this recovery (the market invalidates every sibling ' +

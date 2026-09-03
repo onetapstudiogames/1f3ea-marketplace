@@ -826,6 +826,133 @@ test('key recover generate refuses when the stored key authenticates as a differ
   }
 })
 
+// --- Round-4 review, MEDIUM finding: identity-client.mjs's rotate() and ----
+// recoverBegin() must print (and act on) the already-validated STAGED
+// handle -- the label they actually just wrote to -- never the confirm
+// response's own, never-validated `handle` field. A server that names one
+// handle on begin and a different one on confirm must never make the
+// success output name a merchant that was never touched, and an embedded
+// newline in that unvalidated field must never fabricate extra output
+// lines. See scripts/identity-client.mjs's own comments at the two
+// `if (typeof confirmed.handle === 'string' && confirmed.handle !== staged.handle)`
+// checks in rotate() and recoverBegin().
+
+test(
+  'identity-client.mjs rotate refuses when the confirm response names a different handle than begin staged, ' +
+  'instead of printing (or trusting) that name -- the staged handle is what was actually written',
+  async () => {
+    const stub = await startStubMarketServer({ rotateConfirmHandleOverride: 'attacker-agent' })
+    const home = makeTempHome('rotate-confirm-mismatch-')
+    try {
+      const victimKey = `1f3ea_sk_${'9'.repeat(48)}`
+      stub.merchants.set('victim-merchant', { merchant_key: victimKey, recovery_codes: [], client_class: 'coding_persistent' })
+
+      const result = await runNode(identityClientPath, [
+        'rotate', '--origin', stub.origin, '--client-class', 'coding_persistent',
+      ], { env: { ...home.env, AGENT_1F3EA_SECRET: victimKey } })
+
+      assert.notEqual(result.status, 0, 'a confirm-response handle that differs from what begin staged must refuse')
+      assert.match(result.stderr, /victim-merchant/u, 'names the STAGED handle -- the one actually written')
+      assert.match(result.stderr, /attacker-agent/u, 'also names the bogus confirmed handle, so the caller sees the discrepancy')
+      assert.doesNotMatch(result.stdout, /handle: attacker-agent/u, 'stdout never claims the wrong merchant was rotated')
+      assert.doesNotMatch(result.stdout, /^handle: /mu, 'the success "handle:" line is never printed at all once this refuses')
+      assertNoSecretLeaked(result, 'identity-client rotate confirm mismatch')
+
+      // The rotation genuinely happened server-side (the market really did
+      // hand back a new key at begin) -- so the write under the STAGED
+      // handle is real, and must be verifiable, not silently dropped along
+      // with the refusal.
+      const stored = readSecret(stub.origin, 'victim-merchant', { homeDir: home.dir })
+      assert.equal(stored.found, true)
+      assert.notEqual(stored.value.merchant_key, victimKey, 'the replacement key is genuinely written under the staged handle')
+
+      // And nothing is ever written under the unvalidated, bogus confirmed name.
+      const bogus = readSecret(stub.origin, 'attacker-agent', { homeDir: home.dir })
+      assert.equal(bogus.found, false, 'nothing is ever written under the confirm response\'s own handle')
+    } finally {
+      deleteSecret(stub.origin, 'victim-merchant', { homeDir: home.dir })
+      deleteSecret(stub.origin, 'attacker-agent', { homeDir: home.dir })
+      home.cleanup()
+      await stub.close()
+    }
+  },
+)
+
+test(
+  'identity-client.mjs rotate: an embedded newline in the confirm response\'s handle never fabricates extra ' +
+  'output lines -- it reaches the refusal message only escaped, via JSON.stringify',
+  async () => {
+    const poisoned = 'attacker-agent\nstored: 1f3ea:https://evil.invalid:TOTALLY FAKE\nmerchant_id: 999'
+    const stub = await startStubMarketServer({ rotateConfirmHandleOverride: poisoned })
+    const home = makeTempHome('rotate-confirm-newline-')
+    try {
+      const victimKey = `1f3ea_sk_${'8'.repeat(48)}`
+      stub.merchants.set('victim-two', { merchant_key: victimKey, recovery_codes: [], client_class: 'coding_persistent' })
+
+      const result = await runNode(identityClientPath, [
+        'rotate', '--origin', stub.origin, '--client-class', 'coding_persistent',
+      ], { env: { ...home.env, AGENT_1F3EA_SECRET: victimKey } })
+
+      assert.notEqual(result.status, 0)
+      // The poisoned value must appear only as an ESCAPED JSON string (real
+      // newlines rendered as the two characters "\n", not an actual line
+      // break) -- never raw, which is what would let it fabricate a
+      // convincing extra "stored:"/"merchant_id:" line in a transcript the
+      // key skill instructs the agent to relay verbatim.
+      assert.match(result.stderr, /attacker-agent\\nstored: 1f3ea:https:\/\/evil\.invalid:TOTALLY FAKE\\nmerchant_id: 999/u)
+      assert.doesNotMatch(result.stdout, /stored: 1f3ea:https:\/\/evil\.invalid:TOTALLY FAKE/u, 'the fabricated line never lands on stdout')
+      assert.doesNotMatch(result.stdout, /merchant_id: 999/u, 'the fabricated line never lands on stdout')
+      assert.doesNotMatch(result.stdout, /^handle: /mu, 'the success "handle:" line is never printed at all once this refuses')
+      assertNoSecretLeaked(result, 'identity-client rotate confirm newline injection')
+    } finally {
+      deleteSecret(stub.origin, 'victim-two', { homeDir: home.dir })
+      deleteSecret(stub.origin, poisoned, { homeDir: home.dir })
+      home.cleanup()
+      await stub.close()
+    }
+  },
+)
+
+test(
+  'identity-client.mjs recover begin refuses when the confirm response names a different handle than begin ' +
+  'staged, instead of printing (or trusting) that name',
+  async () => {
+    const stub = await startStubMarketServer({ recoveryConfirmHandleOverride: 'attacker-agent' })
+    const home = makeTempHome('recover-confirm-mismatch-')
+    try {
+      const victimKey = `1f3ea_sk_${'5'.repeat(48)}`
+      const recoveryCode = `1f3ea_rc_${'a'.repeat(64)}`
+      stub.merchants.set('victim-three', {
+        merchant_key: victimKey, recovery_codes: [recoveryCode], client_class: 'coding_persistent',
+      })
+
+      const result = await runNode(identityClientPath, [
+        'recover', 'begin', '--origin', stub.origin, '--client-class', 'coding_persistent',
+        '--recovery-code-file', '-',
+      ], { input: recoveryCode, env: home.env })
+
+      assert.notEqual(result.status, 0, 'a confirm-response handle that differs from what begin staged must refuse')
+      assert.match(result.stderr, /victim-three/u, 'names the STAGED handle -- the one actually written')
+      assert.match(result.stderr, /attacker-agent/u, 'also names the bogus confirmed handle')
+      assert.doesNotMatch(result.stdout, /handle: attacker-agent/u)
+      assert.doesNotMatch(result.stdout, /^handle: /mu, 'the success "handle:" line is never printed at all once this refuses')
+      assertNoSecretLeaked(result, 'identity-client recover begin confirm mismatch')
+
+      const stored = readSecret(stub.origin, 'victim-three', { homeDir: home.dir })
+      assert.equal(stored.found, true)
+      assert.notEqual(stored.value.merchant_key, victimKey, 'the replacement key is genuinely written under the staged handle')
+
+      const bogus = readSecret(stub.origin, 'attacker-agent', { homeDir: home.dir })
+      assert.equal(bogus.found, false, 'nothing is ever written under the confirm response\'s own handle')
+    } finally {
+      deleteSecret(stub.origin, 'victim-three', { homeDir: home.dir })
+      deleteSecret(stub.origin, 'attacker-agent', { homeDir: home.dir })
+      home.cleanup()
+      await stub.close()
+    }
+  },
+)
+
 // --- Finding 11: --reveal is refused through a piped wrapper, not dropped -
 
 test('key rotate/recover generate refuse --reveal outright when stdout is not a TTY, instead of silently dropping it', async () => {
