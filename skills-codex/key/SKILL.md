@@ -27,10 +27,12 @@ only when explicitly told to reveal.
   output verbatim.
 - **`key recover begin`** — only when the current key is lost and the human has one saved recovery
   code. Ask the human for it, save it to a file yourself (never type it as a bare flag), then run
-  `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" recover begin --recovery-code-file <path>` and print
-  its output verbatim. Delete the temporary file afterward. Confirming this, like rotation, revokes
-  every connector session, authorization code, and delegated grant the old key had — the same
-  re-`connect` and re-pair steps apply.
+  `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" recover begin --recovery-code-file <path>
+  --client-class <coding_persistent|coding_ephemeral>` and print its output verbatim (pass
+  `--client-class` explicitly here — unlike rotate above, the vault entry that would otherwise
+  supply it is usually exactly what was lost). Delete the temporary file afterward. Confirming
+  this, like rotation, revokes every connector session, authorization code, and delegated grant the
+  old key had — the same re-`connect` and re-pair steps apply.
 - **`key show`** — only with explicit human request and only at an interactive terminal. Run
   `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" show --reveal [--handle <handle>]`. Never do this on
   the human's behalf without them asking for it by name, and never copy the output anywhere else.
