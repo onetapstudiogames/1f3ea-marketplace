@@ -4,13 +4,35 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repositoryRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+// Round-2 item (MEDIUM): .claude-plugin/marketplace.json used to sit
+// outside this list, so the only in-CI pin on its version was a
+// hand-edited literal in test/plugin-packaging.test.mjs -- a future
+// release that bumps every manifest below but forgets marketplace.json
+// (and that literal) would still pass this check. It carries its version
+// at plugins[0].version, not at the top level every other manifest here
+// uses -- see manifestVersionOf below.
 const manifestPaths = [
   "plugin.json",
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
   "gemini-extension.json",
   "qwen-extension.json",
+  ".claude-plugin/marketplace.json",
 ];
+const MARKETPLACE_MANIFEST_PATH = ".claude-plugin/marketplace.json";
+
+const manifestVersionOf = (path, manifest) => {
+  if (path === MARKETPLACE_MANIFEST_PATH) {
+    const version = manifest.plugins?.[0]?.version;
+    if (typeof version !== "string") {
+      throw new Error(
+        `${path} has no plugins[0].version to compare against the other manifests`,
+      );
+    }
+    return version;
+  }
+  return manifest.version;
+};
 
 const normalizeText = (value) => value.replaceAll("\r\n", "\n");
 
@@ -167,7 +189,7 @@ const readCurrentVersions = async (cwd) => {
   const entries = await Promise.all(
     manifestPaths.map(async (path) => {
       const manifest = JSON.parse(await readFile(resolve(cwd, path), "utf8"));
-      return [path, manifest.version];
+      return [path, manifestVersionOf(path, manifest)];
     }),
   );
   const expected = entries[0][1];
