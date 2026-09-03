@@ -703,6 +703,129 @@ test('key recover generate writes the fresh codes into the live vault entry, not
   }
 })
 
+// --- Round-3 review, HIGH finding: recoverGenerate must take the same ------
+// per-(origin, handle) lock promoteReplacementKey (register/rotate/recover
+// begin) already takes, so a concurrent rotation confirming while a
+// recover-generate call is still in flight can never silently revert the
+// vault to the key that rotation just revoked. Proven deterministically
+// here by pre-holding the exact lockfile identity-client.mjs's own
+// promoteLockPath computes -- fresh, not stale -- and asserting
+// recoverGenerate refuses to acquire it (mirroring promoteReplacementKey's
+// own "could not acquire the per-handle vault lock" refusal) rather than
+// silently bypassing it and rewriting the live entry anyway.
+
+test('key recover generate refuses when the per-handle vault lock is already held, instead of silently bypassing it', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-recover-gen-lock-')
+  const origin = stub.origin
+  const handle = 'agent-lockrace'
+  try {
+    const merchantKey = `1f3ea_sk_${'8'.repeat(48)}`
+    stub.merchants.set(handle, { merchant_key: merchantKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(origin, handle, {
+      kind: 'merchant', handle, client_class: 'coding_persistent',
+      merchant_key: merchantKey, recovery_codes: [], origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    // Simulate another promoteReplacementKey call (a concurrent rotate/
+    // recover-begin/register on this same handle) already holding the
+    // per-(origin, handle) lock -- the exact lockfile name
+    // identity-client.mjs's own promoteLockPath computes, fresh (not
+    // stale), so this run cannot break it and must wait out its own 2s
+    // budget and refuse.
+    const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
+    const safeHandle = handle.replace(/[^a-z0-9._-]/giu, '_')
+    const lockDir = join(home.dir, '.1f3ea')
+    mkdirSync(lockDir, { recursive: true })
+    const lockPath = join(lockDir, `promote-lock__${safeOrigin}__${safeHandle}.lock`)
+    writeFileSync(lockPath, '')
+
+    const result = await runNode(
+      keyPath, ['recover', 'generate', '--origin', origin, '--handle', handle],
+      { env: home.env, timeout: 10_000 },
+    )
+    assert.notEqual(result.status, 0, 'recover generate must refuse rather than silently rewrite the live entry while the lock is held')
+    assert.match(result.stderr, /could not acquire the per-handle vault lock/u)
+    assertNoSecretLeaked(result, 'key recover generate lock refusal')
+
+    // The market DID mint fresh codes server-side (its own state changed --
+    // recover generate posted to /api/recovery before ever touching the
+    // lock), but the vault itself must be untouched: the live entry still
+    // holds the ORIGINAL key and no recovery codes, never rewritten mid-lock.
+    const stillLive = readSecret(origin, handle, { homeDir: home.dir })
+    assert.equal(stillLive.found, true)
+    assert.equal(stillLive.value.merchant_key, merchantKey, 'the live vault entry was never rewritten while the lock was held')
+    assert.deepEqual(stillLive.value.recovery_codes, [], 'the just-minted codes were never written to the vault either')
+  } finally {
+    deleteSecret(origin, handle, { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+// --- Round-3 review, MEDIUM finding: key.mjs's rotate/recover generate ----
+// must run the same probeMe label-vs-identity check `key status` and
+// `connect` already run, and refuse on a mismatch -- otherwise a mislabeled
+// vault entry silently rotates/regenerates a DIFFERENT merchant than the
+// one named, leaving the labelled entry holding a now-revoked key.
+
+test('key rotate refuses to act when the stored key authenticates as a different handle, instead of silently rotating the wrong merchant', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-rotate-mismatch-')
+  try {
+    const bobKey = `1f3ea_sk_${'7'.repeat(48)}`
+    stub.merchants.set('adv-bob-r', { merchant_key: bobKey, recovery_codes: [], client_class: 'coding_persistent' })
+    // bob's key, planted under alice's label -- a stale label, a hand-copied
+    // entry, or a market-normalized handle all produce this shape.
+    storeSecret(stub.origin, 'adv-alice-r', {
+      kind: 'merchant', handle: 'adv-alice-r', client_class: 'coding_persistent',
+      merchant_key: bobKey, recovery_codes: [], origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(keyPath, ['rotate', '--origin', stub.origin, '--handle', 'adv-alice-r'], { env: home.env })
+    assert.notEqual(result.status, 0, 'a handle mismatch must refuse, never rotate the wrong merchant')
+    assert.match(result.stderr, /authenticates as "adv-bob-r"/u)
+    assert.match(result.stderr, /adv-alice-r/u)
+    assertNoSecretLeaked(result, 'key rotate mismatch')
+
+    // Bob's key must still be exactly what it was -- never rotated behind
+    // his back because someone else's vault entry happened to point at it.
+    assert.equal(stub.merchants.get('adv-bob-r').merchant_key, bobKey)
+  } finally {
+    deleteSecret(stub.origin, 'adv-alice-r', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+test('key recover generate refuses when the stored key authenticates as a different handle, instead of silently regenerating codes for the wrong merchant', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-recover-gen-mismatch-')
+  try {
+    const bobKey = `1f3ea_sk_${'6'.repeat(48)}`
+    stub.merchants.set('adv-bob-g', { merchant_key: bobKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(stub.origin, 'adv-alice-g', {
+      kind: 'merchant', handle: 'adv-alice-g', client_class: 'coding_persistent',
+      merchant_key: bobKey, recovery_codes: [], origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(keyPath, ['recover', 'generate', '--origin', stub.origin, '--handle', 'adv-alice-g'], { env: home.env })
+    assert.notEqual(result.status, 0, 'a handle mismatch must refuse, never regenerate codes for the wrong merchant')
+    assert.match(result.stderr, /authenticates as "adv-bob-g"/u)
+    assertNoSecretLeaked(result, 'key recover generate mismatch')
+
+    // Bob's recovery codes must be untouched.
+    assert.deepEqual(stub.merchants.get('adv-bob-g').recovery_codes, [])
+  } finally {
+    deleteSecret(stub.origin, 'adv-alice-g', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
 // --- Finding 11: --reveal is refused through a piped wrapper, not dropped -
 
 test('key rotate/recover generate refuse --reveal outright when stdout is not a TTY, instead of silently dropping it', async () => {
@@ -1051,6 +1174,14 @@ test('connect.mjs chat mints a pairing code in the market\'s real shape and neve
     assert.ok(codeLine, `a pairing code matching the real 1f3ea_pc_<48 hex> shape was printed; got:\n${result.stdout}`)
     assert.match(result.stdout, /expires_at:/u)
     assert.match(result.stdout, /I already have a store/u, 'names the human\'s remaining click')
+    // Round-3 review, LOW finding: this happy-path test asserted the code
+    // shape, expires_at, and step 3's click, but never the "bound to
+    // merchant" line connect.mjs prints specifically so step 4 ("confirm the
+    // merchant it connects") is checkable against something this script
+    // actually stated -- unpinned, deleting both output lines from
+    // connect.mjs would still pass this test.
+    assert.match(result.stdout, /bound to merchant "agent-chat"/u)
+    assert.match(result.stdout, /should read "agent-chat"/u)
     assertNoSecretLeaked(result, 'connect.mjs chat')
   } finally {
     deleteSecret(stub.origin, 'agent-chat', { homeDir: home.dir })

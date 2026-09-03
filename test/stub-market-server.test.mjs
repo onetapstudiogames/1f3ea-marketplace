@@ -118,3 +118,74 @@ test('stub register stage: an EXTRA unrecognized field is still refused unexpect
     await stub.close()
   }
 })
+
+test('stub register stage: a model over 120 characters (or with a control character) is refused invalid_identity', async () => {
+  const stub = await startStubMarketServer()
+  try {
+    const tooLong = await postJson(stub.origin, '/api/register', {
+      action: 'stage', handle: 'valid-store-2', model: 'x'.repeat(121), client_class: 'coding_persistent',
+      human_approved: true,
+    })
+    assert.equal(tooLong.status, 400)
+    assert.equal(tooLong.reason, 'invalid_identity')
+
+    const controlChar = await postJson(stub.origin, '/api/register', {
+      action: 'stage', handle: 'valid-store-3', model: 'claude\u0001opus', client_class: 'coding_persistent',
+      human_approved: true,
+    })
+    assert.equal(controlChar.status, 400)
+    assert.equal(controlChar.reason, 'invalid_identity')
+  } finally {
+    await stub.close()
+  }
+})
+
+// Round-3 review, LOW finding: every confirm door looked up the pending
+// stage BEFORE checking the merchant-key shape, inverting the real market's
+// own order (requireFields -> requireCeremony -> requireMerchantKey, THEN
+// the store lookup) -- so a malformed key on an unknown/expired session was
+// refused request_unavailable here instead of the real door's own
+// credential_rejected. Pinned on all three confirm doors, matching the
+// five reason-name tests already in this file.
+
+test('stub register confirm: a malformed merchant_key is refused credential_rejected before the pending lookup, not request_unavailable', async () => {
+  const stub = await startStubMarketServer()
+  try {
+    const result = await postJson(stub.origin, '/api/register', {
+      action: 'confirm', session: 'a'.repeat(64), csrf: 'b'.repeat(64), merchant_key: 'nope',
+    })
+    assert.equal(result.status, 403)
+    assert.equal(result.reason, 'credential_rejected')
+    assert.equal(result.headerReason, 'credential_rejected')
+  } finally {
+    await stub.close()
+  }
+})
+
+test('stub rotate confirm: a malformed merchant_key is refused credential_rejected before the pending lookup, not request_unavailable', async () => {
+  const stub = await startStubMarketServer()
+  try {
+    const result = await postJson(stub.origin, '/api/rotate', {
+      action: 'confirm', session: 'a'.repeat(64), csrf: 'b'.repeat(64), merchant_key: 'nope',
+    })
+    assert.equal(result.status, 403)
+    assert.equal(result.reason, 'credential_rejected')
+    assert.equal(result.headerReason, 'credential_rejected')
+  } finally {
+    await stub.close()
+  }
+})
+
+test('stub recovery confirm: a malformed merchant_key is refused credential_rejected before the pending lookup, not request_unavailable', async () => {
+  const stub = await startStubMarketServer()
+  try {
+    const result = await postJson(stub.origin, '/api/recovery', {
+      action: 'confirm', session: 'a'.repeat(64), csrf: 'b'.repeat(64), merchant_key: 'nope',
+    })
+    assert.equal(result.status, 403)
+    assert.equal(result.reason, 'credential_rejected')
+    assert.equal(result.headerReason, 'credential_rejected')
+  } finally {
+    await stub.close()
+  }
+})

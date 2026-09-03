@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { writeFileSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from 'node:fs'
+import { writeFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -9,7 +9,9 @@ import test from 'node:test'
 
 import {
   deleteSecret,
+  isValidModel,
   listVaultLabels,
+  parseKeychainServiceNames,
   promoteReplacementKey,
   readSecret,
   SecretReadFailure,
@@ -785,4 +787,224 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
       }
     },
   )
+
+  // Round-3 review, LOW finding: the two tests above only assert the READ
+  // half of the legacy-index fix (vaultIndexEntriesToMap/isStagingLabel).
+  // Nothing pinned the other half -- updateVaultIndex's own
+  // `meta.staging === undefined ? entryLabel : {...}` -- which is what
+  // actually keeps a rewrite from silently upgrading a legacy bare-string
+  // entry to `staging: false`, or touching a real, already-known boolean.
+  // Revert that one line to the old unconditional object form and the two
+  // tests above still pass; only this one catches it.
+  test(
+    `storeSecret (${backendPlatform}): a rewrite for an unrelated label preserves an existing legacy bare-string entry and a real staging boolean, never inventing one`,
+    { skip },
+    async () => {
+      const homeDir = await mkdtemp(join(tmpdir(), `identity-client-index-preserve-${backendPlatform}-`))
+      try {
+        const seededOrigin = 'https://example.invalid'
+        mkdirSync(join(homeDir, '.1f3ea'), { recursive: true })
+        writeFileSync(
+          join(homeDir, '.1f3ea', 'vault-index.json'),
+          `${JSON.stringify({
+            [seededOrigin]: [
+              'legacy-bare-label',
+              { label: 'obj-false-label', staging: false },
+            ],
+          }, null, 2)}\n`,
+        )
+        const deps = { platform: backendPlatform, homeDir, execFileSync: () => '' }
+
+        // storeSecret for an UNRELATED label -- exercising the same
+        // read-modify-write updateVaultIndex runs on every store/delete.
+        storeSecret(seededOrigin, 'brand-new-label', {
+          kind: 'merchant',
+          handle: 'brand-new-label',
+          client_class: 'coding_persistent',
+          merchant_key: `1f3ea_sk_${'a'.repeat(48)}`,
+          origin: seededOrigin,
+        }, deps)
+
+        const rewritten = JSON.parse(readFileSync(join(homeDir, '.1f3ea', 'vault-index.json'), 'utf8'))
+        const entries = rewritten[seededOrigin]
+        assert.ok(Array.isArray(entries), 'the origin still has an entries array')
+        assert.ok(
+          entries.includes('legacy-bare-label'),
+          'the legacy bare-string entry is still a bare string, not silently upgraded to an object',
+        )
+        const objEntry = entries.find(entry => typeof entry === 'object' && entry?.label === 'obj-false-label')
+        assert.ok(objEntry, 'the object-form entry is still present')
+        assert.equal(objEntry.staging, false, 'its real staging:false boolean was preserved exactly, not flipped or dropped')
+        const newEntry = entries.find(entry => typeof entry === 'object' && entry?.label === 'brand-new-label')
+        assert.ok(newEntry, 'the newly-stored label was added to the index')
+        assert.equal(newEntry.staging, false, 'the new entry itself correctly records a real (non-staging) boolean')
+      } finally {
+        await rm(homeDir, { recursive: true, force: true })
+      }
+    },
+  )
 }
+
+// --- Round-3 review, MEDIUM finding: darwin Keychain enumeration ----------
+// listVaultLabels on darwin trusted the HOME-resident vault-index.json
+// alone, so setup.mjs's duplicate-identity guard failed open in exactly the
+// "state file gone, vault intact" scenario the guard exists to catch. Fixed
+// by having listVaultLabels enumerate the Keychain itself via
+// `security dump-keychain` (metadata only, never `-d`), unioned with the
+// index -- the same way the win32 branch already unions a `cmdkey /list`
+// scrape. This darwin backend cannot actually run on this (non-macOS) CI
+// runner, so the parser below is pinned against a captured, documented
+// sample of real `security dump-keychain` output rather than a live binary.
+
+const SAMPLE_DUMP_KEYCHAIN_OUTPUT = [
+  'keychain: "/Users/agent/Library/Keychains/login.keychain-db"',
+  'version: 512',
+  'class: "genp"',
+  'attributes:',
+  '    0x00000007 <blob>="1f3ea:https://1f3ea.com:alice"',
+  '    0x00000008 <blob>=<NULL>',
+  '    "acct"<blob>="alice"',
+  '    "crtr"<uint32>=<NULL>',
+  '    "cusi"<sint32>=<NULL>',
+  '    "desc"<blob>=<NULL>',
+  '    "gena"<blob>=<NULL>',
+  '    "icmt"<blob>=<NULL>',
+  '    "invi"<sint32>=<NULL>',
+  '    "pdmn"<blob>="ak"',
+  '    "prot"<blob>=<NULL>',
+  '    "scrp"<sint32>=<NULL>',
+  '    "svce"<blob>="1f3ea:https://1f3ea.com:alice"',
+  '    "sync"<sint32>=0x00000000 ',
+  '    "tomb"<sint32>=0x00000000 ',
+  '    "type"<uint32>=<NULL>',
+  '',
+  'keychain: "/Users/agent/Library/Keychains/login.keychain-db"',
+  'version: 512',
+  'class: "genp"',
+  'attributes:',
+  '    0x00000007 <blob>="AIM"',
+  '    0x00000008 <blob>=<NULL>',
+  '    "acct"<blob>="unrelated-app-account"',
+  '    "svce"<blob>="AIM"',
+  '    "sync"<sint32>=0x00000000 ',
+  '    "tomb"<sint32>=0x00000000 ',
+  '    "type"<uint32>=<NULL>',
+  '',
+  'keychain: "/Users/agent/Library/Keychains/login.keychain-db"',
+  'version: 512',
+  'class: "genp"',
+  'attributes:',
+  '    0x00000007 <blob>="1f3ea:https://1f3ea.com:bob--pending-rotation"',
+  '    "acct"<blob>="bob--pending-rotation"',
+  '    "svce"<blob>="1f3ea:https://1f3ea.com:bob--pending-rotation"',
+  '    "sync"<sint32>=0x00000000 ',
+  '    "tomb"<sint32>=0x00000000 ',
+  '    "type"<uint32>=<NULL>',
+  '',
+  'keychain: "/Users/agent/Library/Keychains/login.keychain-db"',
+  'version: 512',
+  'class: "genp"',
+  'attributes:',
+  '    "acct"<blob>="no-service-name"',
+  '    "svce"<blob>=<NULL>',
+  '    "sync"<sint32>=0x00000000 ',
+  '    "tomb"<sint32>=0x00000000 ',
+  '    "type"<uint32>=<NULL>',
+  '',
+  'keychain: "/Users/agent/Library/Keychains/login.keychain-db"',
+  'version: 512',
+  'class: "genp"',
+  'attributes:',
+  '    "acct"<blob>="escaped-quote-account"',
+  String.raw`    "svce"<blob>="1f3ea:https://1f3ea.com:has\"quote"`,
+  '    "sync"<sint32>=0x00000000 ',
+  '    "tomb"<sint32>=0x00000000 ',
+  '    "type"<uint32>=<NULL>',
+  '',
+].join('\n')
+
+test('parseKeychainServiceNames: reads every "svce" attribute from a captured real dump-keychain sample, skips <NULL>, and unescapes a backslash-quote correctly', () => {
+  const services = parseKeychainServiceNames(SAMPLE_DUMP_KEYCHAIN_OUTPUT)
+  assert.deepEqual(services, [
+    '1f3ea:https://1f3ea.com:alice',
+    'AIM',
+    '1f3ea:https://1f3ea.com:bob--pending-rotation',
+    '1f3ea:https://1f3ea.com:has"quote',
+  ])
+})
+
+test('parseKeychainServiceNames: empty or unrelated output yields no services', () => {
+  assert.deepEqual(parseKeychainServiceNames(''), [])
+  assert.deepEqual(parseKeychainServiceNames('keychain: "/x"\nversion: 512\n'), [])
+})
+
+test(
+  'listVaultLabels (darwin): enumerates the Keychain itself via dump-keychain, unioned with the index -- ' +
+  'so a lost/reset HOME (index gone, Keychain intact) still surfaces the real entry',
+  async () => {
+    const origin = 'https://1f3ea.com'
+    const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-darwin-keychain-'))
+    try {
+      const dumpOutput = [
+        '    "svce"<blob>="1f3ea:https://1f3ea.com:real-merchant"',
+        '    "svce"<blob>="1f3ea:https://1f3ea.com:real-merchant--pending-rotation"',
+        '    "svce"<blob>="1f3ea:https://other-origin.invalid:not-this-origin"',
+      ].join('\n')
+      const deps = {
+        platform: 'darwin',
+        homeDir, // deliberately empty -- no vault-index.json at all, simulating "state lost"
+        execFileSync: (command, args) => {
+          if (command === 'security' && args[0] === 'dump-keychain') return dumpOutput
+          throw new Error(`unexpected exec call: ${command} ${args.join(' ')}`)
+        },
+      }
+
+      assert.deepEqual(
+        listVaultLabels(origin, deps),
+        ['real-merchant'],
+        'the real Keychain entry is found even with no index at all, and its own staging sibling is excluded ' +
+        'by the suffix guess (no index entry to say otherwise)',
+      )
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  },
+)
+
+test('listVaultLabels (darwin): a failed dump-keychain call falls back to the index alone, same as the win32 cmdkey fallback', async () => {
+  const origin = 'https://1f3ea.com'
+  const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-darwin-keychain-fail-'))
+  try {
+    mkdirSync(join(homeDir, '.1f3ea'), { recursive: true })
+    writeFileSync(
+      join(homeDir, '.1f3ea', 'vault-index.json'),
+      `${JSON.stringify({ [origin]: [{ label: 'indexed-merchant', staging: false }] }, null, 2)}\n`,
+    )
+    const deps = {
+      platform: 'darwin',
+      homeDir,
+      execFileSync: () => { throw new Error('security not found') },
+    }
+
+    assert.deepEqual(listVaultLabels(origin, deps), ['indexed-merchant'])
+  } finally {
+    await rm(homeDir, { recursive: true, force: true })
+  }
+})
+
+// --- Round-3 review, MEDIUM finding: --model validation mirrors the -------
+// market's own identityModelValue (trim, <=120 code points, no control or
+// directional-override marks).
+
+test('isValidModel: accepts an empty string, a normal label, and exactly 120 characters after trimming', () => {
+  assert.equal(isValidModel(''), true)
+  assert.equal(isValidModel('  claude-opus  '), true)
+  assert.equal(isValidModel('x'.repeat(120)), true)
+})
+
+test('isValidModel: refuses more than 120 characters after trimming, and any control or directional-override mark', () => {
+  assert.equal(isValidModel('x'.repeat(121)), false)
+  assert.equal(isValidModel(`  ${'x'.repeat(121)}  `), false, 'trims before counting, but 121 real characters still refuses')
+  assert.equal(isValidModel('claude\u0000opus'), false, 'a NUL control character is refused')
+  assert.equal(isValidModel('claude‎opus'), false, 'a left-to-right mark (directional override) is refused')
+})
