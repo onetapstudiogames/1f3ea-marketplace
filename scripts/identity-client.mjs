@@ -1171,6 +1171,43 @@ function isStagingLabel(label, indexMap) {
 }
 
 /**
+ * True when `label` is specifically a REGISTRATION staging label -- i.e. it
+ * is staging (per isStagingLabel above) AND its text carries the per-run
+ * suffixed shape pendingLabel('...', 'registration') produces
+ * (`<handle>--pending-registration-<hex>`), never the unsuffixed rotation/
+ * recovery shapes (`<handle>--pending-rotation`, `<handle>--pending-
+ * recovery`). The `staging` marker itself does not carry which KIND of
+ * staging entry this is -- register()/rotate()/recoverBegin() all write the
+ * same generic `kind: 'staging'` -- so telling registration apart from
+ * rotation/recovery has to fall back to the one place that distinction still
+ * exists: the label's own suffix. That is fine here specifically because
+ * RESERVED_HANDLE_SUBSTRING_RE already refuses any handle containing
+ * "--pending-" going forward, so a live merchant's label can no longer
+ * collide with this shape (see isPendingLabel's own doc comment for the
+ * same reasoning, applied to the broader staging check).
+ */
+function isRegistrationStagingLabel(label, indexMap) {
+  return isStagingLabel(label, indexMap) && /--pending-registration-[0-9a-f]+$/u.test(label)
+}
+
+/**
+ * Attaches the registration staging labels `listVaultLabels` just filtered
+ * out of `result` as a non-enumerable `registrationStagingLabels` property,
+ * mirroring how `incomplete` is attached -- invisible to existing callers
+ * that treat the return value as a plain array (assert.deepEqual included),
+ * but readable by name for setup.mjs's duplicate-identity guard. Only
+ * attached when at least one such label exists, same convention `incomplete`
+ * uses (attached only when true).
+ */
+function attachRegistrationStagingLabels(result, allLabels, indexMap) {
+  const registrationStagingLabels = allLabels.filter(label => isRegistrationStagingLabel(label, indexMap))
+  if (registrationStagingLabels.length > 0) {
+    Object.defineProperty(result, 'registrationStagingLabels', { value: registrationStagingLabels, enumerable: false })
+  }
+  return result
+}
+
+/**
  * Lists every label this host's vault currently holds for `origin`,
  * excluding staging labels -- never the exact-handle lookup readSecret
  * already does, but a genuine enumeration of "does anything else already
@@ -1214,8 +1251,9 @@ function listVaultLabels(origin, deps = {}) {
     }
     const vaultIndex = readVaultIndex(deps.homeDir)
     const indexMap = vaultIndexEntriesToMap(Array.isArray(vaultIndex[origin]) ? vaultIndex[origin] : [])
-    const labels = new Set([...fromCmdkey, ...indexMap.keys()])
-    return [...labels].filter(label => !isStagingLabel(label, indexMap))
+    const allLabels = [...new Set([...fromCmdkey, ...indexMap.keys()])]
+    const result = allLabels.filter(label => !isStagingLabel(label, indexMap))
+    return attachRegistrationStagingLabels(result, allLabels, indexMap)
   }
   if (os === 'darwin') {
     const index = readVaultIndex(deps.homeDir)
@@ -1259,15 +1297,15 @@ function listVaultLabels(origin, deps = {}) {
       // below, same as win32's cmdkey fallback above.
       if (error?.code === 'ENOBUFS' || error?.code === 'ETIMEDOUT') incomplete = true
     }
-    const labels = new Set([...fromKeychain, ...indexMap.keys()])
-    const result = [...labels].filter(label => !isStagingLabel(label, indexMap))
+    const allLabels = [...new Set([...fromKeychain, ...indexMap.keys()])]
+    const result = allLabels.filter(label => !isStagingLabel(label, indexMap))
     if (incomplete) {
       // Non-enumerable so existing callers that treat this as a plain
       // array of labels (assert.deepEqual included) see no difference;
       // setup.mjs's duplicate-identity guard checks this flag explicitly.
       Object.defineProperty(result, 'incomplete', { value: true, enumerable: false })
     }
-    return result
+    return attachRegistrationStagingLabels(result, allLabels, indexMap)
   }
   const dir = join(deps.homeDir ?? homedir(), '.1f3ea', 'credentials')
   const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
@@ -1291,7 +1329,8 @@ function listVaultLabels(origin, deps = {}) {
   // isStagingLabel, same as win32/darwin.
   const index = readVaultIndex(deps.homeDir)
   const indexMap = vaultIndexEntriesToMap(Array.isArray(index[origin]) ? index[origin] : [])
-  return labels.filter(label => !isStagingLabel(label, indexMap))
+  const result = labels.filter(label => !isStagingLabel(label, indexMap))
+  return attachRegistrationStagingLabels(result, labels, indexMap)
 }
 
 // --- HTTP -----------------------------------------------------------------

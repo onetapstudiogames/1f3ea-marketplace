@@ -56,7 +56,7 @@ import { createInterface } from 'node:readline'
 import { resolve } from 'node:path'
 import { pluginRoot } from './lib/paths.mjs'
 import { readSetupState, writeSetupState, SetupStateReadFailure } from './lib/identity-state.mjs'
-import { probeMe } from './lib/identity-probe.mjs'
+import { probeMe, probeOfficialDoors } from './lib/identity-probe.mjs'
 import {
   readSecret, SecretReadFailure, listVaultLabels, HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE, isValidModel,
 } from './identity-client.mjs'
@@ -445,6 +445,41 @@ if (!newIdentity) {
     process.exitCode = 1
     process.exit()
   }
+  // A registration whose vault promotion failed can leave the confirmed
+  // merchant key ONLY under its `--pending-registration-<hex>` staging
+  // label, while the merchant it names is already permanent server-side
+  // (promoteReplacementKey's own doc comment). The otherLabels check just
+  // below never sees that label at all -- listVaultLabels excludes every
+  // staging label from its main result by design -- so a later run choosing
+  // a DIFFERENT handle would sail straight past that check and register a
+  // second, permanent, unrecoverable merchant right next to the stranded
+  // one. Catch that specific shape here, before otherLabels, using the
+  // registration staging labels listVaultLabels now surfaces alongside
+  // `incomplete`. Rotation/recovery staging labels are deliberately left
+  // out of this check: their live entry sits under a handle the caller
+  // already owns and the otherLabels check below already covers, so they
+  // carry none of this specific stranding risk.
+  const registrationStagingLabels = allLabels.registrationStagingLabels ?? []
+  if (registrationStagingLabels.length > 0) {
+    const label = registrationStagingLabels[0]
+    const base = label.replace(/--pending-registration-[0-9a-f]+$/u, '')
+    const andMore = registrationStagingLabels.length > 1
+      ? `, and ${registrationStagingLabels.length - 1} more`
+      : ''
+    console.error(
+      `setup: refusing to register "${handle}" as a new identity at ${origin}: this host's vault holds a ` +
+      `registration staging label ("${label}"${andMore}) for this origin. A registration whose vault ` +
+      'promotion failed can leave the confirmed merchant key stored ONLY under a label like that one, while ' +
+      'the merchant it names is already permanent and unrecoverable server-side -- a later run choosing a ' +
+      `different handle must never silently register a second one next to it. Run \`key status --handle ` +
+      `${base}\` to check whether "${base}" is already a live merchant, and if it is, read the key back from ` +
+      `"${label}" (\`key show --reveal\` after temporarily pointing --handle at that exact staging label, or ` +
+      'read the vault entry directly) and store it under a real label yourself. Only pass --new-identity ' +
+      'once you have confirmed this staging label is not a stranded confirmed registration.',
+    )
+    process.exitCode = 1
+    process.exit()
+  }
   const otherLabels = allLabels.filter(label => label !== handle)
   if (otherLabels.length > 0) {
     console.error(
@@ -574,6 +609,31 @@ async function confirmHumanApproval() {
     pending_approval: { handle, client_class: clientClass, nonce, created_at: new Date().toISOString() },
   })
   return { approved: false, token: computeApprovalToken(nonce) }
+}
+
+// Before ever spending the approval nonce below (confirmHumanApproval mints
+// one on the first pass and CONSUMES one on the second) -- check whether the
+// coding-client identity doors are even open. The market publishes
+// identity.coding_client_doors as null while MARKET_CODING_IDENTITY_ENABLED
+// is off, and /api/register itself refuses in that state with reason
+// coding_identity_dormant -- but by the time register() reaches that
+// refusal, a second-pass nonce has already been spent, forcing a human
+// through the whole approval question a second time for a registration that
+// was always going to fail. A failed read here (network error, unreachable
+// origin) is not evidence the doors are dormant -- it falls through and lets
+// the existing verbatim register()-time 503 surfacing stay the backstop for
+// a door that goes dormant between this check and the actual register call.
+const officialCheck = await probeOfficialDoors(origin, { allowOrigin })
+if (officialCheck.ok && !officialCheck.codingDoorsOpen) {
+  console.error(
+    `setup: refusing to register "${handle}" at ${origin}: GET /api/official reports ` +
+    'identity.coding_client_doors as null (reason: coding_identity_dormant) -- the coding-client identity ' +
+    'doors (/api/register, /api/rotate, /api/recovery, /api/pair) are not open yet, so this registration ' +
+    'would be refused outright. Nothing was created and no approval nonce was spent. Retry once the market ' +
+    'opens these doors.',
+  )
+  process.exitCode = 1
+  process.exit()
 }
 
 const approval = await confirmHumanApproval()
