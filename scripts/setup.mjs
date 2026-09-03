@@ -33,17 +33,22 @@
 // question directly, as one more confirmation ON TOP OF the valid token —
 // never as a substitute for it, and never on the first run.
 //
-// What this token IS: proof that this exact registration was refused once,
-// with the question printed, before a second call could proceed — it does
-// NOT prove a human ever saw or answered that question, and nothing stops
-// the SAME agent, in the SAME unattended session, from running the first
-// pass, reading the token it prints, and immediately running the second
-// pass itself — the mechanism cannot detect or prevent that, and does not
-// try to. The market records a valid token as this agent's own declaration
-// that a human said yes out of band; it is never proof of who actually
-// said it, and a deliberate agent that satisfies this gate without a real
-// human answer is making a false declaration on that public record, not
-// defeating a security control.
+// What this token IS: that token proves only that a nonce record for this
+// exact origin, handle, and client class exists on this host — normally
+// written by a first pass that also printed the question, though anything
+// able to write this script's own setup-state file can create one directly
+// — so it never proves the question was printed, never proves a human saw
+// or answered it, and stands only as this agent's own recorded word that a
+// human said yes out of band.
+//
+// Nothing stops the SAME agent, in the SAME unattended session, from
+// running the first pass, reading the token it prints, and immediately
+// running the second pass itself — the mechanism cannot detect or prevent
+// that, and does not try to. The market records a valid token as this
+// agent's own declaration that a human said yes out of band; it is never
+// proof of who actually said it, and a deliberate agent that satisfies this
+// gate without a real human answer is making a false declaration on that
+// public record, not defeating a security control.
 
 import { spawnSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
@@ -53,7 +58,7 @@ import { pluginRoot } from './lib/paths.mjs'
 import { readSetupState, writeSetupState, SetupStateReadFailure } from './lib/identity-state.mjs'
 import { probeMe } from './lib/identity-probe.mjs'
 import {
-  readSecret, SecretReadFailure, listVaultLabels, HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE,
+  readSecret, SecretReadFailure, listVaultLabels, HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE, isValidModel,
 } from './identity-client.mjs'
 import { assertAllowedOrigin } from './lib/origin-guard.mjs'
 
@@ -363,6 +368,20 @@ if (clientClass !== 'coding_persistent' && clientClass !== 'coding_ephemeral') {
   process.exit()
 }
 
+// Same discipline again, applied to --model: checked locally, before any
+// approval step or network call, against the exact rule the market's own
+// identityModelValue enforces -- so an approval nonce is never spent on a
+// registration that was always going to fail on its model label alone.
+const requestedModel = typeof flags.model === 'string' ? flags.model : ''
+if (!isValidModel(requestedModel)) {
+  console.error(
+    'setup: --model must be at most 120 characters after trimming, with no control or directional-override ' +
+    'marks (the market\'s own validator refuses the same). Fix the model label, then re-run.',
+  )
+  process.exitCode = 1
+  process.exit()
+}
+
 // Before ever attempting to register, check whether this host's vault
 // already has a WORKING key for the exact handle requested. A lost or
 // truncated setup-state.json must never turn a merchant that already exists
@@ -578,13 +597,14 @@ if (!approval.approved) {
     `re-run this exact command with --human-approved ${approval.token} appended. This check runs the same ` +
     'way whether or not stdin is an interactive terminal: on one, the second run (the one carrying this ' +
     'token) will ALSO ask this exact same question directly, as one more confirmation on top of the token, ' +
-    'never as a substitute for it. What the token proves: this exact registration was refused once, with ' +
-    'the question above printed, before being allowed to proceed -- it is the agent\'s own recorded ' +
-    'declaration that a human then said yes out of band. What it does NOT prove: that a ' +
-    'human actually saw or answered the question -- nothing stops the same agent, in the same unattended ' +
-    'session, from running this exact refused call and then immediately running the second one itself. ' +
-    'Doing that is a false declaration on the public record, not a defeated security control; this script ' +
-    'never claims otherwise.',
+    'never as a substitute for it. What the token proves: that token proves only that a nonce record for ' +
+    'this exact origin, handle, and client class exists on this host -- normally written by a first pass ' +
+    'that also printed the question above, though anything able to write this script\'s own setup-state ' +
+    'file can create one directly -- so it never proves the question was printed, never proves a human saw ' +
+    'or answered it, and stands only as the agent\'s own recorded word that a human said yes out of band. ' +
+    'Nothing stops the same agent, in the same unattended session, from running this exact refused call and ' +
+    'then immediately running the second one itself. Doing that is a false declaration on the public ' +
+    'record, not a defeated security control; this script never claims otherwise.',
   )
   process.exitCode = 1
   process.exit()
@@ -604,7 +624,7 @@ const registerArgs = [
 // requires the field to be PRESENT ("" is accepted, an absent key is not).
 // Passing '' explicitly here keeps that contract visible at this call site
 // too, rather than relying on identity-client.mjs's own internal default.
-registerArgs.push('--model', typeof flags.model === 'string' ? flags.model : '')
+registerArgs.push('--model', requestedModel)
 if (allowOrigin) registerArgs.push('--allow-origin', allowOrigin)
 
 // The identity of record from here on is whatever the market actually
