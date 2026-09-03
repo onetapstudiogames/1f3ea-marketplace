@@ -169,6 +169,37 @@ async function status() {
 }
 
 /**
+ * The same probeMe label-vs-identity check status() runs above (and
+ * connect.mjs runs before ever spawning `pair`) -- shared here so
+ * rotate()/recoverGenerate() below run it too, before ever acting on a
+ * `--handle`-resolved key: without it, a stale label, a hand-copied entry,
+ * or a market-normalized handle would let rotate/recover generate silently
+ * act on a DIFFERENT merchant than the one named, leaving the entry the
+ * caller actually asked about holding a now-revoked key with no statement
+ * that the wrong merchant was the one actually changed.
+ *
+ * Returns `true` when it is safe to proceed: either the probe confirms the
+ * label matches, OR the probe could not complete at all (a bad/dead key, a
+ * network error) -- in which case there is nothing this check can validate,
+ * and the command below will surface its own error if the key truly does
+ * not work. Returns `false`, having already printed the identical refusal
+ * status() prints and set `process.exitCode`, only on a CONFIRMED mismatch.
+ */
+async function refuseOnHandleMismatch(handle, merchantKey) {
+  const probe = await probeMe(origin, merchantKey, { allowOrigin })
+  if (!probe.ok) return true
+  if (probe.handle && probe.handle !== handle) {
+    console.error(
+      `key: stored key: works, but authenticates as "${probe.handle}", not "${handle}" -- the vault entry ` +
+      `labelled "${handle}" belongs to a different merchant. Pass --handle ${probe.handle} instead, or fix the entry.`,
+    )
+    process.exitCode = 1
+    return false
+  }
+  return true
+}
+
+/**
  * Runs `node identity-client.mjs <args...>` with `merchantKey` piped in on
  * stdin. When --reveal was requested, this can only take effect if the
  * CHILD's own stdout is a real interactive terminal (revealOrHide there
@@ -201,11 +232,12 @@ function runIdentityClient(label, args, merchantKey) {
   }
 }
 
-function rotate() {
+async function rotate() {
   const handle = requireHandle()
   if (!handle) return
   const merchantKey = requireStoredKey(handle)
   if (!merchantKey) return
+  if (!(await refuseOnHandleMismatch(handle, merchantKey))) return
   const clientClass = requireStoredClientClass(handle)
   if (!clientClass) return
   const args = [
@@ -215,11 +247,12 @@ function rotate() {
   runIdentityClient('key rotate', args, merchantKey)
 }
 
-function recoverGenerate() {
+async function recoverGenerate() {
   const handle = requireHandle()
   if (!handle) return
   const merchantKey = requireStoredKey(handle)
   if (!merchantKey) return
+  if (!(await refuseOnHandleMismatch(handle, merchantKey))) return
   // The market's own /api/recovery `generate` action requires client_class
   // too (see identity-client.mjs's recoverGenerate comment) -- default it
   // from the same stored vault entry requireStoredKey above already found,
@@ -267,13 +300,47 @@ function resolveClientClassForRecoveryBegin() {
   return null
 }
 
-function recoverBegin() {
+/**
+ * Recover begin is reached precisely when the current key is often already
+ * lost or dead, so unlike rotate()/recoverGenerate() above this cannot
+ * always probe a WORKING key to validate the label before acting -- there
+ * may be no resolvable handle at all, no vault entry for it, or its stored
+ * merchant_key may simply no longer authenticate, all of which are the
+ * expected, ordinary reason someone reaches this command in the first
+ * place. This validates only what it safely can: if a handle resolves AND
+ * a stored key for it happens to still work, checked the same way
+ * rotate()/recoverGenerate() above do, and it authenticates as a DIFFERENT
+ * merchant, refuse with the identical wording -- otherwise (no resolvable
+ * handle, no stored entry, or the stored key simply does not work, which is
+ * the common case here) there is nothing this check can validate, and
+ * recoverBegin proceeds exactly as it did before this check existed.
+ */
+async function validateBeforeRecoverBegin() {
+  let handle = null
+  try {
+    handle = resolveHandle()
+  } catch {
+    handle = null
+  }
+  if (!handle) return true
+  let stored
+  try {
+    stored = readSecret(origin, handle)
+  } catch {
+    return true
+  }
+  if (!stored.found || typeof stored.value?.merchant_key !== 'string') return true
+  return refuseOnHandleMismatch(handle, stored.value.merchant_key)
+}
+
+async function recoverBegin() {
   const codeSource = flags['recovery-code-file']
   if (typeof codeSource !== 'string') {
     console.error('key recover begin: --recovery-code-file <path|-> is required (never a bare --recovery-code).')
     process.exitCode = 1
     return
   }
+  if (!(await validateBeforeRecoverBegin())) return
   const clientClass = resolveClientClassForRecoveryBegin()
   if (!clientClass) return
   const args = [
@@ -347,11 +414,11 @@ function show() {
 
 const command = positionals[0]
 if (command === 'status') await status()
-else if (command === 'rotate') rotate()
+else if (command === 'rotate') await rotate()
 else if (command === 'recover') {
   const sub = positionals[1]
-  if (sub === 'generate') recoverGenerate()
-  else if (sub === 'begin') recoverBegin()
+  if (sub === 'generate') await recoverGenerate()
+  else if (sub === 'begin') await recoverBegin()
   else {
     console.error('key recover: needs a subcommand, "generate" or "begin"')
     process.exitCode = 1
