@@ -2,15 +2,14 @@
 // vault-adopt guard: it proves a stored merchant key still works, and (via
 // the returned handle) whether it actually authenticates as the merchant
 // the vault entry is labelled under, without ever printing the key itself.
-// This is GET /api/me, not a side-effect-free probe: the served contract
-// states plainly that "ordinary GET /api/me remains state-changing, wakes
-// due timers, and advances its private fee-credit last-read marker" -- so
-// every call site above says so too, rather than calling this "harmless".
-// It stays GET /api/me (not the passive POST /api/me
-// {"mode":"later_holder_notice"} read) because every current caller needs
-// the handle this read returns to detect a mismatched vault label; the
-// passive read's own contract does not return one. Never throws — callers
-// get { ok, handle, error } and decide what to say.
+// This is GET /api/me -- the market's own front door documents it plainly
+// as "Your standing: GET https://1f3ea.com/api/me (listings, sales,
+// purchases, replies)", a single authenticated read with no other claim
+// attached. It carries no side-effect claim, and there is no separate
+// passive-read mode: /api/me is GET-only (src/collection-routes.ts). Every
+// call site above says only that this read is authenticated -- proof the
+// key still works -- and nothing more. Never throws — callers get
+// { ok, handle, error } and decide what to say.
 
 import { assertAllowedOrigin } from './origin-guard.mjs'
 
