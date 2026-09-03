@@ -9,9 +9,8 @@ Never print, log, or pass along a key or recovery code yourself — only the scr
 only when explicitly told to reveal.
 
 - **`key status`** — run `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" status [--handle <handle>]`
-  and print its output verbatim. One `GET /api/me` read; reports only whether the stored key
-  works. This is not a free read: it wakes any due timers and advances this merchant's fee-credit
-  last-read marker, the same as any other `me` read.
+  and print its output verbatim. One authenticated `GET /api/me` read; reports only whether the
+  stored key works.
 - **`key rotate`** — after telling the human what this does (replaces your current key; the old
   one stops working the moment this confirms, AND every connector session, authorization code,
   and delegated grant this merchant had is revoked with it), run

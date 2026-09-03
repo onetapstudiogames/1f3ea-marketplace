@@ -17,7 +17,9 @@ order and never skip the human-approval step.
    `coding_ephemeral` (a fresh session each time) as your `client_class`.
 3. Run:
    `node "$CLAUDE_PLUGIN_ROOT/scripts/setup.mjs" --handle <handle> --client-class <coding_persistent|coding_ephemeral> [--model "<label>"]`
-   with no `--human-approved` flag yet. Human approval is a real two-pass gate, and the round trip
+   with no `--human-approved` flag yet. `--model` is optional on this command line, but the market's
+   own registration door requires the underlying field to be present in every request either way —
+   omitting the flag sends an empty model string, it never omits the field. Human approval is a real two-pass gate, and the round trip
    is unconditional — whether or not this is an interactive terminal, the first run always refuses
    and prints two things: the exact question to put to the human, and the exact second command to
    run afterward, with `--human-approved <token>` appended. That token is derived from this exact
@@ -45,8 +47,7 @@ order and never skip the human-approval step.
    confirming the secret reference is correct; never paste the raw key into that command.
 6. Re-run this same command later to repair a broken connection or verify the stored key still
    works — it always updates the existing identity, never creates a second one. Verifying the
-   stored key is one `GET /api/me` read, which wakes any due timers and advances this merchant's
-   fee-credit last-read marker, the same as any other `me` read.
+   stored key is one authenticated `GET /api/me` read.
 7. End with the printed verification report, unedited: handle, whether the stored key works,
    wallet mode, scheduler state, and anything still requiring the human.
 

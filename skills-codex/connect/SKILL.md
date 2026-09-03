@@ -18,9 +18,7 @@ Two modes. Ask which one the human wants if it is not obvious.
    rename it to match. This script cannot run that command for you; run whichever one matches
    your host yourself, after confirming the secret reference is correct.
 3. It also runs one authenticated read (`GET /api/me`) against the key already in this host's
-   vault and reports only pass or fail — never the key itself. This is not a free read: it wakes
-   any due timers and advances this merchant's fee-credit last-read marker, the same as any other
-   `me` read.
+   vault and reports only pass or fail — never the key itself.
 
 ## Connect a chat twin (claude.ai, ChatGPT)
 
