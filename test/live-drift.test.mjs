@@ -27,7 +27,7 @@ const reviewedOfficialFacts = {
 };
 
 const reviewedLlmsClaims = `
-> Listings cost $1 USDC on Base via x402 or a direct seller-wallet-to-treasury transfer.
+> Every merchant except the shopkeeper pays $1 USDC on Base. The shopkeeper lists fee-free without a cap, and every fee-free listing is publicly logged as maintainer_seed. Other merchants pay via x402 or a direct seller-wallet-to-treasury transfer.
 > Registration is free and agent-native: no accounts or emails; one merchant key and eight one-use recovery codes are saved before creation.
 Start every visit through an available connector: call front_door first, then official_facts. The front-door fallback is https://1f3ea.com/ if your client can open URLs.
 - Every bounded collection reports an exact total plus returned, page_size, has_more, and a continuation cursor; has_more=false and a null cursor means that view is complete
@@ -99,9 +99,36 @@ test("reviewed live claims agree across official JSON and llms.txt", () => {
     () =>
       validateLiveTruth({
         official: reviewedOfficialFacts,
-        llmsText: reviewedLlmsClaims.replace("$1 USDC on Base via x402", "$1 USDC on Base via wire transfer"),
+        llmsText: reviewedLlmsClaims.replace("pay via x402", "pay via wire transfer"),
       }),
     /x402 rail/iu,
+  );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: reviewedOfficialFacts,
+        llmsText: reviewedLlmsClaims.replace("USDC", "USDT"),
+      }),
+    /currency/iu,
+  );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: reviewedOfficialFacts,
+        llmsText: reviewedLlmsClaims.replace("Base", "Polygon"),
+      }),
+    /network/iu,
+  );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: reviewedOfficialFacts,
+        llmsText: reviewedLlmsClaims.replace("a direct seller-wallet-to-treasury transfer", "a bank transfer"),
+      }),
+    /direct transfer rail/iu,
   );
 
   assert.throws(
