@@ -59,13 +59,20 @@ only when explicitly told to reveal.
   - Authenticates as a **different** handle → that entry is not dead, it belongs to someone else;
     adopt refuses, names both handles, and points at recovering the mislabelled entry
     (`key show --reveal`, then `key adopt` under its real handle) before anything is touched.
-  - The market actually **rejects** the credential (a 401/403 read as "this key does not work") —
-    the shape a stranded rotation or recovery leaves — adopt promotes the staged key over it.
-    **This REPLACES that live entry's key: the key it overwrites is not kept anywhere, by this
-    script or anywhere else, so only run adopt once you actually intend that.**
-  - Anything else (a timeout, a DNS failure, connection refused, a 5xx, a 429 — the market simply
-    could not be reached or answered) is **never** treated as dead; adopt refuses, changes nothing,
-    and says to retry once the market is reachable.
+  - The market actually **rejects** the credential — a `401` whose body is the market's own JSON
+    error, the only shape `GET /api/me` can ever answer a bad key with — the shape a stranded
+    rotation or recovery leaves — adopt promotes the staged key over it. A `403`, or a `401` with
+    an HTML or otherwise non-matching body, is never treated as a rejection: that is what an edge,
+    firewall, or proxy answers in front of a perfectly healthy origin, not what the market itself
+    can produce. **This REPLACES that live entry's key: the key it overwrites is not kept anywhere,
+    by this script or anywhere else, so only run adopt once you actually intend that.**
+  - The entry at `--handle` exists but carries no `merchant_key` at all → nothing to lose; adopt
+    says so and replaces it with no probe needed. Same replace-with-disclosure rule as the line
+    above.
+  - Anything else (a timeout, a DNS failure, connection refused, a 5xx, a 429, a 403, or a 401 the
+    market itself could not have produced — the market simply could not be reached or answered) is
+    **never** treated as dead; adopt refuses, changes nothing, and says to retry once the market is
+    reachable.
 
   The staging copy is deleted only once the real handle actually holds the working key, and only
   on the paths above that actually promote — never printing the key itself.

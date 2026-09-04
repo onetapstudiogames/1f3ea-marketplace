@@ -35,6 +35,23 @@
   asserting "dead." **Promoting over a live entry still replaces that entry's key — the key it
   overwrites is kept nowhere by this script — so this correction narrows *when* that happens, it does
   not make it reversible; only run `key adopt` once you actually intend that replacement.**
+- **Corrected 2026-09-03:** the correction above described the credential-rejection check as "an
+  HTTP 401/403," and that was too wide: `GET /api/me` has no suspended or banned merchant state and
+  never answers 403 at all, so treating a 403 — or a 401 whose body was not the market's own JSON
+  error — as a rejection let anything sitting in front of a perfectly healthy origin (a Vercel
+  Firewall / Attack Challenge Mode page, a Cloudflare interstitial, a corporate proxy, a
+  deployment-protection page) destroy a working live key. `rejected` now fires only for a 401 whose
+  body parsed as JSON with a string `error` field — the one shape the market's own credential check
+  can produce — and a 403 or any other 401 refuses and changes nothing, same as a timeout or a 5xx
+  always did. Separately, the same correction never mentioned a fourth outcome the code already had:
+  a live entry that exists but carries no `merchant_key` at all is replaced with no probe at all,
+  since there is nothing there to lose — now stated plainly instead of only in the "credential
+  rejection" line. And the read-then-promote window that judges the live entry dead — a real window
+  spanning the live probe's own network round trip plus a vault read, not sub-millisecond — is now
+  re-verified with no extra network call, under `promoteReplacementKey`'s own per-handle lock,
+  immediately before the write: a concurrent registration, rotation, recovery, or adopt that lands a
+  NEW working key at the same handle inside that window is now detected and refused instead of
+  silently overwritten with a message that blamed a rejection of an entry no longer there.
 - **Corrected 2026-09-03:** the 2.4.0 "a merchant key never touches ... travels only ... or as the
   one `merchant_key` field" bullet omitted the recovery code's own body-field transport: a
   recovery code travels as the `recovery_code` field inside a request to `/api/recovery` (begin),
