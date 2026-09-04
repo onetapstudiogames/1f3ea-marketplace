@@ -2,6 +2,15 @@
 
 ## [2.4.1] - 2026-09-03
 
+- `setup` now exits non-zero whenever the stored key it just verified does not actually work: a
+  repair or adopt pass that finds a dead or unreachable key used to print "secret reference works:
+  no" and still exit 0, so a caller branching on `setup`'s exit status could see a broken key and
+  move on regardless. On Windows, `setup` also no longer aborts with a libuv `UV_HANDLE_CLOSING`
+  assertion and exit `3221226505` after a non-200 `/api/me` probe (a repair or adopt pass that
+  called `probeMe` and then `probeOfficialDoors` before exiting could hit this under load) — it now
+  exits `1` cleanly instead. Both are caller-visible contract changes against the released 2.4.0,
+  where a repair or adopt pass could exit 0 on a dead key and a Windows run could crash with a
+  nonstandard exit code instead of a clean refusal.
 - Added `key adopt --handle <handle> --from-label <staging-label>`, to recover a merchant key
   stranded under a staging label when a past `setup`, `key rotate`, or `key recover begin` run's
   server-side confirm succeeded but its local vault promotion failed. It probes `GET /api/me` with
