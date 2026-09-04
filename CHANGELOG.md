@@ -1,5 +1,83 @@
 # Changelog
 
+## [2.4.1] - 2026-09-03
+
+- `setup` now exits non-zero whenever the stored key it just verified does not actually work: a
+  repair or adopt pass that finds a dead or unreachable key used to print "secret reference works:
+  no" and still exit 0, so a caller branching on `setup`'s exit status could see a broken key and
+  move on regardless. On Windows, `setup` also no longer aborts with a libuv `UV_HANDLE_CLOSING`
+  assertion and exit `3221226505` after a non-200 `/api/me` probe (a run passing
+  `--handle`/`--client-class` that finds a stored vault entry whose `/api/me` probe fails, and so
+  goes on to call `probeOfficialDoors` before refusing, could hit this under load); it now exits
+  `1` cleanly instead. Both are caller-visible contract changes against the released 2.4.0, where
+  a repair or adopt pass could exit 0 on a dead key and a Windows run could crash with a
+  nonstandard exit code instead of a clean refusal.
+- Added `key adopt --handle <handle> --from-label <staging-label>`, to recover a merchant key
+  stranded under a staging label when a past `setup`, `key rotate`, or `key recover begin` run's
+  server-side confirm succeeded but its local vault promotion failed. It probes `GET /api/me` with
+  the staged key and refuses unless that probe authenticates as `--handle` exactly. It then reads
+  and probes whatever currently lives at `--handle`, if anything: a live entry that still
+  authenticates as `--handle` — or as a *different* merchant — always refuses and changes nothing,
+  naming both entries so an agent can read each (`key show --handle <label> --reveal`) before
+  deciding by hand. A live entry promotes only when the market itself answers `GET /api/me` with a
+  401 carrying its own JSON credential error, or when that entry carries no `merchant_key` at all —
+  every other outcome (a 403, an HTML 401, a timeout, a 5xx, a 429, or a 401 JSON `error` that is
+  not the market's own) refuses and changes nothing rather than guessing, and prints its own probe
+  result before deciding anything either way. A promotion **replaces the previous key
+  irreversibly — the key it overwrites is kept nowhere by this script** — while a stranded
+  registration carries its own real recovery codes forward and a rotation/recovery strand records
+  the invalidation instead (the two were never mutually exclusive). The final write re-verifies,
+  under a per-handle lock with no extra network call, that the entry it is about to overwrite is
+  still the one this command already checked: a concurrent registration, rotation, recovery, or
+  adopt that lands a *different* key at the same handle in that window is detected and refused
+  instead of silently overwritten, and if that entry was deleted rather than replaced, the refusal
+  says so plainly instead of asking the caller to compare two entries when only one still exists.
+  `setup`'s own registration-staging refusal points at it, and so do `rotate`'s and `recover
+  begin`'s own stranded-key messages; `help`, the root `SKILL.md`, and `SETUP.md` all list it next
+  to `key status` / `key rotate` / `key recover` / `key show`.
+- `key status` now draws the same distinction `key adopt` draws on its own probes: a genuine
+  credential rejection prints "does not work," while a probe the market never actually answered
+  with one — a timeout, a 5xx, a 403, an edge/gateway page — prints "could not be verified right
+  now" and says to retry, instead of collapsing both into the same "does not work" verdict that
+  `key adopt`'s own refusal messages point an agent at, and that an agent could reasonably escalate
+  to `key rotate` or `key recover begin` over — both of which succeed against a healthy market and
+  both of which irreversibly invalidate every recovery code, connector session, authorization code,
+  and delegated grant for a key that was never actually dead.
+- **Corrected 2026-09-03:** the 2.4.0 "a merchant key never touches ... travels only ... or as the
+  one `merchant_key` field" bullet omitted the recovery code's own body-field transport: a
+  recovery code travels as the `recovery_code` field inside a request to `/api/recovery` (begin),
+  the same way a merchant key travels as `merchant_key` to `/api/register` (confirm), `/api/rotate`
+  (begin), and `/api/recovery` (generate) — an incomplete enumeration presented as complete. Every
+  one of these calls, like every other network call this skill makes, travels only over `https`
+  with redirects refused.
+- Fixed `scripts/run-tests-with-home-guard.mjs`'s handling of a failed platform-vault enumeration
+  (`cmdkey /list` or `security dump-keychain` itself failing to run): it used to suppress the
+  guard's other checks whenever this happened, so a real, already-proven `~/.1f3ea` directory leak
+  was reported only as "investigate the enumeration tool," hiding the leak the guard exists to
+  name. It now reports every failure that actually applies — enumeration failure, directory drift,
+  platform-vault target drift, and pre-existing loopback residue — together, never just the first
+  one found. The decision is now a pure, exported `classifyGuardResult` helper with direct test
+  coverage, including the specific case that regressed: a real directory leak reported alongside a
+  failed enumeration, not hidden behind it.
+- `key adopt` now refuses up front, with its own wording, when `--from-label` names the same entry
+  as `--handle` — there is no staging copy to move in that case, so it no longer tries the promote
+  and never surfaces `promoteReplacementKey`'s register()-specific "a concurrent run must have won
+  the race for this handle" wording for a caller that never registered anything.
+- The three `promoteReplacementKey` failure messages an agent can hit mid-registration, mid-
+  rotation, or mid-recovery (an unreadable existing vault entry, a failed final write, and a timed-
+  out per-handle lock) now name `key adopt --handle <handle> --from-label <staging-label>` as the
+  first remedy, ahead of the manual "read the key back and store it yourself" fallback that was
+  previously the only recovery path they described — these are the exact moments a stranded key
+  most needs `key adopt`, and it now genuinely works from a stranded rotation or recovery, not only
+  a stranded registration (see the `key adopt` bullet above). Each message also now names its own
+  key in its own words — "the confirmed merchant key from this registration," "... from this
+  rotation," "... from this recovery" — instead of a generic "replacement key" that told a
+  first-time registration its nonexistent "old key" no longer worked.
+- `npm run check:release-version` now also checks `.claude-plugin/marketplace.json`'s
+  `plugins[0].version` against the other five manifests, closing the one manifest that previously
+  had no gate but a hand-edited literal in `test/plugin-packaging.test.mjs`; that test now reads
+  `plugin.json`'s own version instead of repeating it as a literal.
+
 ## [2.4.0] - 2026-09-03
 
 - Added three real commands that were "coming soon" in 2.3.0: `setup`, `connect` (and

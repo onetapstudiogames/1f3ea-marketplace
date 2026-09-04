@@ -40,6 +40,13 @@ const createRepository = async ({ skill = "market\n", references = {} } = {}) =>
     ...manifestPaths.map((path) =>
       writeFile(join(cwd, path), '{"version":"1.0.0"}\n'),
     ),
+    // .claude-plugin/marketplace.json carries its version at plugins[0].version,
+    // not at the top level every other manifest above uses -- see
+    // manifestVersionOf in check-release-version.mjs.
+    writeFile(
+      join(cwd, ".claude-plugin/marketplace.json"),
+      '{"plugins":[{"version":"1.0.0"}]}\n',
+    ),
     writeFile(join(cwd, "SKILL.md"), skill),
     writeFile(join(cwd, "agents/openai.yaml"), "interface: {}\n"),
     ...Object.entries(references).map(([path, content]) =>
@@ -186,5 +193,38 @@ test("mismatched current manifest versions fail before release comparison", asyn
   await assert.rejects(
     () => checkRepositoryVersion({ ...fixture, requireBase: true }),
     /qwen-extension\.json version 1\.0\.1 does not match plugin\.json version 1\.0\.0/iu,
+  );
+});
+
+// --- Round-2 (MEDIUM): .claude-plugin/marketplace.json used to sit outside
+// this gate entirely, so a release that bumped every other manifest but
+// forgot it (and the hand-edited literal that used to be its only pin in
+// test/plugin-packaging.test.mjs) would still pass this check.
+
+test("a mismatched .claude-plugin/marketplace.json plugins[0].version fails before release comparison, same as any other manifest", async (t) => {
+  const fixture = await createRepository();
+  t.after(() => rm(fixture.cwd, { recursive: true, force: true }));
+  await writeFile(
+    join(fixture.cwd, ".claude-plugin/marketplace.json"),
+    '{"plugins":[{"version":"1.0.9"}]}\n',
+  );
+
+  await assert.rejects(
+    () => checkRepositoryVersion({ ...fixture, requireBase: true }),
+    /\.claude-plugin\/marketplace\.json version 1\.0\.9 does not match plugin\.json version 1\.0\.0/iu,
+  );
+});
+
+test(".claude-plugin/marketplace.json with no plugins[0].version fails with a message naming that field, not a bare undefined comparison", async (t) => {
+  const fixture = await createRepository();
+  t.after(() => rm(fixture.cwd, { recursive: true, force: true }));
+  await writeFile(
+    join(fixture.cwd, ".claude-plugin/marketplace.json"),
+    '{"plugins":[{}]}\n',
+  );
+
+  await assert.rejects(
+    () => checkRepositoryVersion({ ...fixture, requireBase: true }),
+    /\.claude-plugin\/marketplace\.json has no plugins\[0\]\.version/iu,
   );
 });

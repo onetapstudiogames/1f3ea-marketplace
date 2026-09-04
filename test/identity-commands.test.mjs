@@ -1563,13 +1563,13 @@ test('setup.mjs never trips the OLD "different label" guard off a staging label 
     assert.match(result.stderr, /agent-abandoned--pending-registration-deadbeef/u, 'names the exact stranded label')
     assert.match(
       result.stderr,
-      /key status --handle agent-abandoned--pending-registration-deadbeef/u,
-      'points the diagnostic at the staging label, not the base handle, since the base handle can never succeed',
+      /key adopt --handle agent-abandoned --from-label agent-abandoned--pending-registration-deadbeef/u,
+      'points at the command that can actually resolve this -- key adopt, not key status',
     )
     assert.match(
       result.stderr,
-      /that mismatch\s+IS the confirmation/u,
-      'tells the agent the mismatch refusal from key status IS the proof the merchant is live',
+      /key show --handle agent-abandoned--pending-registration-deadbeef --reveal/u,
+      'points at reading the key back from the staging label itself as the manual alternative',
     )
     assert.equal(stub.merchants.size, 0, 'nothing was registered')
     assertNoSecretLeaked(result, 'setup.mjs leftover registration staging label')
@@ -1643,6 +1643,20 @@ test(
         .filter(label => label.startsWith('alice-agent--pending-registration-'))
       assert.equal(strandedLabels.length, 1, 'exactly one stranded registration staging label was left behind')
 
+      // Round-2 item 5 (LOW): pin promoteReplacementKey's own lock-timeout
+      // message -- the one pass 2 itself hits -- so a future edit cannot
+      // silently drop the `key adopt` remedy it names. setup.mjs relays the
+      // failed register() child's own stderr into its own stdout (via
+      // `say`/`lines`) in this failure branch, not onto its own stderr.
+      assert.match(
+        pass2.stdout,
+        /key adopt --handle alice-agent --from-label alice-agent--pending-registration-[0-9a-f]+/u,
+      )
+      // Round-2 item 2 (MEDIUM): a first-time registration's own strand
+      // message must never read as a rotation/recovery -- there is no old
+      // key here to describe as dead.
+      assert.doesNotMatch(pass2.stdout, /old key/iu)
+
       // Release the simulated lock -- a real held lock from another process
       // would not still be held by the time an entirely separate, later
       // session starts.
@@ -1665,13 +1679,19 @@ test(
       assert.match(laterRun.stderr, new RegExp(strandedLabels[0].replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'u'))
       assert.match(
         laterRun.stderr,
-        new RegExp(`key status --handle ${strandedLabels[0].replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'),
-        'points the diagnostic at the staging label, not the base handle, since the base handle can never succeed',
+        new RegExp(
+          `key adopt --handle alice-agent --from-label ${strandedLabels[0].replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`,
+          'u',
+        ),
+        'points at the command that can actually resolve this -- key adopt, not key status',
       )
       assert.match(
         laterRun.stderr,
-        /that mismatch\s+IS the confirmation/u,
-        'tells the agent the mismatch refusal from key status IS the proof the merchant is live',
+        new RegExp(
+          `key show --handle ${strandedLabels[0].replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')} --reveal`,
+          'u',
+        ),
+        'points at reading the already-confirmed key back from the staging label as the manual alternative',
       )
       assertNoSecretLeaked(laterRun, 'setup.mjs stranded-registration duplicate-merchant refusal')
 
@@ -1687,6 +1707,334 @@ test(
     }
   },
 )
+
+// --- `key adopt --handle <handle> --from-label <staging>` is the command
+// setup.mjs's stranded-registration refusal (just above) actually points
+// at -- it reads the staged bundle, probes GET /api/me with it, refuses
+// unless that probe's own handle matches --handle exactly, and only then
+// moves the bundle to the real label (staged-then-promote) and deletes the
+// staging copy. Never prints the key.
+
+test('key adopt: happy path -- moves a confirmed staged key to its real handle and deletes the staging copy', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-happy-')
+  const merchantKey = `1f3ea_sk_${'1'.repeat(48)}`
+  const stagingLabel = 'alice-agent--pending-registration-deadbeef'
+  try {
+    // Mirrors the exact stranded state the reproduction test above creates:
+    // the market already confirmed "alice-agent" server-side, but the
+    // confirmed key lives only under a registration staging label locally.
+    stub.merchants.set('alice-agent', { merchant_key: merchantKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(stub.origin, stagingLabel, {
+      kind: 'staging',
+      handle: 'alice-agent',
+      client_class: 'coding_persistent',
+      merchant_key: merchantKey,
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(
+      keyPath,
+      ['adopt', '--origin', stub.origin, '--handle', 'alice-agent', '--from-label', stagingLabel],
+      { env: home.env },
+    )
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(result.stdout, /handle: alice-agent/u)
+    assert.match(result.stdout, /stored:/u)
+    assertNoSecretLeaked(result, 'key adopt happy path')
+
+    const live = readSecret(stub.origin, 'alice-agent', { homeDir: home.dir })
+    assert.ok(live.found, 'the real label now holds the adopted key')
+    assert.equal(live.value.merchant_key, merchantKey)
+
+    const staging = readSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+    assert.equal(staging.found, false, 'the staging copy was deleted once the promotion succeeded')
+  } finally {
+    deleteSecret(stub.origin, 'alice-agent', { homeDir: home.dir })
+    deleteSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+test('key adopt: refuses when the staged key authenticates as a different merchant than --handle names', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-mismatch-')
+  const merchantKey = `1f3ea_sk_${'2'.repeat(48)}`
+  const stagingLabel = 'bob-agent--pending-registration-cafef00d'
+  try {
+    // The staging label SAYS "bob-agent", but the key it actually holds
+    // authenticates as "carol-agent" server-side -- a mislabeled or
+    // hand-copied staging entry. `key adopt` must trust the probe, not the
+    // label text, and refuse rather than storing a mismatched key under the
+    // wrong handle.
+    stub.merchants.set('carol-agent', { merchant_key: merchantKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(stub.origin, stagingLabel, {
+      kind: 'staging',
+      handle: 'bob-agent',
+      client_class: 'coding_persistent',
+      merchant_key: merchantKey,
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(
+      keyPath,
+      ['adopt', '--origin', stub.origin, '--handle', 'bob-agent', '--from-label', stagingLabel],
+      { env: home.env },
+    )
+    assert.notEqual(result.status, 0, 'refuses on a handle mismatch')
+    assert.match(result.stderr, /authenticates as "carol-agent", not "bob-agent"/u)
+    assertNoSecretLeaked(result, 'key adopt mismatch refusal')
+
+    assert.equal(readSecret(stub.origin, 'bob-agent', { homeDir: home.dir }).found, false, 'nothing was stored under the wrong handle')
+    assert.ok(readSecret(stub.origin, stagingLabel, { homeDir: home.dir }).found, 'the staging copy is left in place, not deleted, on refusal')
+  } finally {
+    deleteSecret(stub.origin, 'bob-agent', { homeDir: home.dir })
+    deleteSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+test('key adopt: refuses with a clear message when --from-label names a vault entry that does not exist', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-missing-label-')
+  try {
+    const result = await runNode(
+      keyPath,
+      ['adopt', '--origin', stub.origin, '--handle', 'dora-agent', '--from-label', 'dora-agent--pending-registration-00000000'],
+      { env: home.env },
+    )
+    assert.notEqual(result.status, 0, 'refuses rather than guessing')
+    assert.match(result.stderr, /no vault entry found for "dora-agent--pending-registration-00000000"/u)
+    assertNoSecretLeaked(result, 'key adopt missing staging label')
+    assert.equal(readSecret(stub.origin, 'dora-agent', { homeDir: home.dir }).found, false, 'nothing was stored')
+  } finally {
+    deleteSecret(stub.origin, 'dora-agent', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+test('key adopt: --handle and --from-label are both required', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-missing-flags-')
+  try {
+    const noHandle = await runNode(keyPath, ['adopt', '--origin', stub.origin, '--from-label', 'x--pending-registration-a'], { env: home.env })
+    assert.notEqual(noHandle.status, 0)
+    assert.match(noHandle.stderr, /--handle <handle> is required/u)
+
+    const noLabel = await runNode(keyPath, ['adopt', '--origin', stub.origin, '--handle', 'dora-agent'], { env: home.env })
+    assert.notEqual(noLabel.status, 0)
+    assert.match(noLabel.stderr, /--from-label <staging-label> is required/u)
+  } finally {
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+// --- Finding 4 (2026-09-03 review): `key adopt` used to surface
+// promoteReplacementKey's register()-specific race wording verbatim when
+// --from-label named an already-live entry, and never refused up front when
+// --from-label equalled --handle. Both reproduced directly below, against
+// the actual CLI subprocess, before asserting the fixed wording.
+
+test('key adopt: refuses up front, with its own wording, when --from-label equals --handle', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-same-label-')
+  const merchantKey = `1f3ea_sk_${'3'.repeat(48)}`
+  try {
+    // A live entry for "walk-agent" and NO staging copy at all -- adopting
+    // from itself has nothing to move, so this must refuse before ever
+    // reading the vault, probing the market, or calling promoteReplacementKey.
+    stub.merchants.set('walk-agent', { merchant_key: merchantKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(stub.origin, 'walk-agent', {
+      kind: 'merchant',
+      handle: 'walk-agent',
+      client_class: 'coding_persistent',
+      merchant_key: merchantKey,
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(
+      keyPath,
+      ['adopt', '--origin', stub.origin, '--handle', 'walk-agent', '--from-label', 'walk-agent'],
+      { env: home.env },
+    )
+    assert.notEqual(result.status, 0, 'refuses rather than attempting a no-op promote')
+    assert.match(result.stderr, /--from-label and --handle are both "walk-agent"/u)
+    assert.match(result.stderr, /there is no staging copy to move/u)
+    // Never the register()-specific race wording -- there was no race, and
+    // this refusal must never claim one happened.
+    assert.doesNotMatch(result.stderr, /concurrent run on this host must have won the race/u)
+    assertNoSecretLeaked(result, 'key adopt same-label refusal')
+
+    const live = readSecret(stub.origin, 'walk-agent', { homeDir: home.dir })
+    assert.ok(live.found, 'the untouched live entry is still exactly where it was')
+    assert.equal(live.value.merchant_key, merchantKey)
+  } finally {
+    deleteSecret(stub.origin, 'walk-agent', { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+test('key adopt: refuses in its own words, not register()\'s race wording, when --from-label names a genuinely different live entry', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-live-collision-')
+  const merchantKey = `1f3ea_sk_${'4'.repeat(48)}`
+  const stagingLabel = 'eve-agent--pending-registration-abc12345'
+  try {
+    // "eve-agent" already has a live entry (registered normally, nothing
+    // stranded about it). A SEPARATE vault entry under a staging-shaped
+    // label happens to hold a key that also authenticates as "eve-agent"
+    // (e.g. a leftover staging copy from a run whose promotion already
+    // succeeded once before). `key adopt --handle eve-agent --from-label
+    // <stagingLabel>` passes every one of adopt's own checks (the staged key
+    // is readable, and it genuinely does probe as "eve-agent") right up to
+    // promoteReplacementKey's refuseIfPresent re-check, which is where this
+    // must refuse -- and it must refuse in adopt's own words, not the
+    // register()-specific "a concurrent run must have won the race" wording,
+    // since no registration ran here at all.
+    stub.merchants.set('eve-agent', { merchant_key: merchantKey, recovery_codes: [], client_class: 'coding_persistent' })
+    storeSecret(stub.origin, 'eve-agent', {
+      kind: 'merchant',
+      handle: 'eve-agent',
+      client_class: 'coding_persistent',
+      merchant_key: merchantKey,
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+    storeSecret(stub.origin, stagingLabel, {
+      kind: 'staging',
+      handle: 'eve-agent',
+      client_class: 'coding_persistent',
+      merchant_key: merchantKey,
+      recovery_codes: [],
+      origin: stub.origin,
+      stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    const result = await runNode(
+      keyPath,
+      ['adopt', '--origin', stub.origin, '--handle', 'eve-agent', '--from-label', stagingLabel],
+      { env: home.env },
+    )
+    assert.notEqual(result.status, 0, 'refuses to overwrite the live entry')
+    assert.match(result.stderr, /the vault already holds a live entry for "eve-agent"/u)
+    assert.match(result.stderr, /ALSO currently authenticates as that same handle/u)
+    // Round-2 HIGH finding: never propose deleting the staging copy -- the
+    // one that just authenticated -- without pointing at reading the live
+    // entry too. `key status` alone cannot show the staging copy's key.
+    assert.match(result.stderr, new RegExp(`key show --handle eve-agent --reveal`, 'u'))
+    assert.match(result.stderr, new RegExp(`key show --handle ${stagingLabel} --reveal`, 'u'))
+    assert.doesNotMatch(result.stderr, /delete it by hand/u)
+    // The old register()-worded message this used to print verbatim.
+    assert.doesNotMatch(result.stderr, /concurrent run on this host must have won the race/u)
+    assert.doesNotMatch(result.stderr, /this registration started/u)
+    assertNoSecretLeaked(result, 'key adopt live-collision refusal')
+
+    const live = readSecret(stub.origin, 'eve-agent', { homeDir: home.dir })
+    assert.equal(live.value.merchant_key, merchantKey, 'the live entry was never overwritten')
+    const staging = readSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+    assert.ok(staging.found, 'the staging copy is left in place on refusal, not deleted')
+  } finally {
+    deleteSecret(stub.origin, 'eve-agent', { homeDir: home.dir })
+    deleteSecret(stub.origin, stagingLabel, { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
+
+// --- Round-2 HIGH finding: a stranded ROTATION (or RECOVERY) leaves the
+// live entry holding the now-dead OLD key while the staging label holds
+// the only copy of the market-confirmed NEW one -- rotate()/recoverBegin()
+// intentionally overwrite the live entry for an already-owned handle, so
+// they never pass refuseIfPresent, and if their own promote step then
+// strands (lock timeout, unreadable entry, store failure), the two
+// promoteReplacementKey messages an agent sees at that exact moment name
+// `key adopt` as the first remedy. Before this fix, adopt always refused
+// in exactly this state (it always passed refuseIfPresent:true), leaving
+// the agent no working command -- only a recipe -- and its own refusal
+// then pointed at deleting the staging copy, the ONLY place the working
+// key lived, after the market had already invalidated every recovery
+// code. This builds that exact vault state (reviewer's harness,
+// scratchpad/pr14b-rotstrand.mjs) and proves the now-named remedy actually
+// works: the printed `key adopt` command succeeds, and the vault ends
+// with exactly one live, working entry and no staging copy left behind.
+test('key adopt: recovers a rotation-strand -- live entry holds a dead key, staging holds the only working one -- leaving one live working entry and no staging copy', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('key-adopt-rotation-strand-')
+  const origin = stub.origin
+  const handle = 'rota-agent'
+  const stagingLabel = 'rota-agent--pending-rotation-0000beef'
+  const workingKey = `1f3ea_sk_${'a'.repeat(48)}`
+  const deadKey = `1f3ea_sk_${'b'.repeat(48)}`
+  try {
+    // The market already confirmed the rotation server-side: only the NEW
+    // key authenticates from here on.
+    stub.merchants.set(handle, { merchant_key: workingKey, recovery_codes: [], client_class: 'coding_persistent' })
+    // Local vault exactly as promoteReplacementKey's own storeSecret-failure
+    // or lock-timeout branch leaves it: the live entry still holds the now-
+    // dead OLD key, and the staging label holds the only copy of the
+    // confirmed NEW one.
+    storeSecret(origin, handle, {
+      kind: 'merchant', handle, client_class: 'coding_persistent',
+      merchant_key: deadKey, recovery_codes: [], origin, stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+    storeSecret(origin, stagingLabel, {
+      kind: 'staging', handle, client_class: 'coding_persistent',
+      merchant_key: workingKey, origin, stored_at: new Date().toISOString(),
+    }, { homeDir: home.dir })
+
+    // Confirm the strand really is what the two reworded strand messages
+    // describe: the stored (live) key does not work.
+    const before = readSecret(origin, handle, { homeDir: home.dir })
+    assert.equal(before.value.merchant_key, deadKey)
+
+    // The exact command the two reworded messages now name first.
+    const result = await runNode(
+      keyPath,
+      ['adopt', '--origin', origin, '--handle', handle, '--from-label', stagingLabel],
+      { env: home.env },
+    )
+    assert.equal(result.status, 0, `the named remedy must actually succeed in this state: ${result.stderr}`)
+    assert.match(result.stdout, /handle: rota-agent/u)
+    // Round-3 MEDIUM finding: the success line now quotes the actual
+    // rejection instead of flatly asserting "dead", and the live probe's
+    // own outcome was disclosed one line up before this run ever decided
+    // to promote.
+    assert.match(result.stdout, /one me read on the existing entry at "rota-agent": FAILED \(bad or missing bearer secret\)/u)
+    assert.match(result.stdout, /replacing the entry found there -- the market rejected it \(bad or missing bearer secret\) -- and deleted the staging copy/u)
+    assertNoSecretLeaked(result, 'key adopt rotation-strand recovery')
+
+    const labelsAfter = listRawVaultLabels(origin, home.dir)
+    assert.deepEqual(labelsAfter, [handle], 'exactly one live entry and no staging copy remain')
+
+    const live = readSecret(origin, handle, { homeDir: home.dir })
+    assert.equal(live.found, true)
+    assert.equal(live.value.merchant_key, workingKey, 'the live entry now holds the working key, not the dead one')
+    assert.ok(live.value.recovery_codes_invalidated_at, 'carries the invalidation marker rotate() itself would have written')
+
+    const staging = readSecret(origin, stagingLabel, { homeDir: home.dir })
+    assert.equal(staging.found, false, 'the staging copy is deleted once promotion succeeds')
+
+    const statusAfter = await runNode(keyPath, ['status', '--origin', origin, '--handle', handle], { env: home.env })
+    assert.equal(statusAfter.status, 0)
+    assert.match(statusAfter.stdout, /stored key: works/u)
+  } finally {
+    for (const label of listRawVaultLabels(origin, home.dir)) deleteSecret(origin, label, { homeDir: home.dir })
+    home.cleanup()
+    await stub.close()
+  }
+})
 
 // --- Finding 9: the test env overlay never leaks the real developer's own -
 // AGENT_1F3EA_SECRET / IDENTITY_ORIGIN into a driven child process.

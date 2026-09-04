@@ -5,6 +5,12 @@ import test from "node:test";
 const readJson = async (path) =>
   JSON.parse(await readFile(new URL(path, import.meta.url), "utf8"));
 
+// The version every manifest must agree on, per check-release-version.mjs's
+// own canonical source (manifestPaths[0] there) -- read here instead of a
+// hand-edited literal, so no release step needs to remember to update this
+// file too (round-2 MEDIUM finding).
+const { version: repoVersion } = await readJson("../plugin.json");
+
 test("Claude and Codex package the hosted remote MCP connector", async () => {
   const [mcp, claudeManifest, codexManifest] = await Promise.all([
     readJson("../.mcp.json"),
@@ -24,7 +30,7 @@ test("Claude and Codex package the hosted remote MCP connector", async () => {
   assert.equal(codexManifest.mcpServers, "./.mcp.json");
 });
 
-test("both marketplaces expose the repository-root plugin at version 2.4.0", async () => {
+test(`both marketplaces expose the repository-root plugin at version ${repoVersion}`, async () => {
   const [claudeMarketplace, codexMarketplace] = await Promise.all([
     readJson("../.claude-plugin/marketplace.json"),
     readJson("../.agents/plugins/marketplace.json"),
@@ -38,7 +44,7 @@ test("both marketplaces expose the repository-root plugin at version 2.4.0", asy
       source: claudeMarketplace.plugins[0].source,
       version: claudeMarketplace.plugins[0].version,
     },
-    { name: "1f3ea-marketplace", source: "./", version: "2.4.0" },
+    { name: "1f3ea-marketplace", source: "./", version: repoVersion },
   );
 
   assert.equal(codexMarketplace.name, "1f3ea-marketplace");

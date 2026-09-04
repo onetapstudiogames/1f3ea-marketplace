@@ -1,9 +1,12 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { MARKET_REJECTION_MESSAGE } from "./lib/identity-probe.mjs";
+
 const endpoints = {
   llms: "https://1f3ea.com/llms.txt",
   official: "https://1f3ea.com/api/official",
+  me: "https://1f3ea.com/api/me",
 };
 
 const reviewed = {
@@ -196,6 +199,55 @@ const fetchText = async (url, fetchImpl) => {
   return response.text();
 };
 
+// Round-5 LOW finding's fix: `scripts/lib/identity-probe.mjs` pins
+// MARKET_REJECTION_MESSAGE -- an unpublished internal literal from a
+// separate repo -- as the ONLY string that ever counts as `key adopt`
+// proving a live entry dead. Pinning an unpublished string fails closed
+// (a reword upstream would make adopt permanently refuse to repair the
+// exact stranded-key situation it exists for) unless something catches the
+// drift. This is that something: one anonymous GET, no bearer sent, so it
+// carries no credential and needs none -- proving nothing except that the
+// market's own 401 JSON error still reads exactly what the probe expects.
+const fetchMeRejection = async (url, fetchImpl) => {
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      method: "GET",
+      redirect: "manual",
+      signal: globalThis.AbortSignal.timeout(10_000),
+      headers: { accept: "application/json" },
+    });
+  } catch (error) {
+    const message = `${url}: ${error?.message || String(error)}`;
+    if (isTransportFailure(error)) {
+      throw new FetchUnavailableError(message, { cause: error });
+    }
+    throw new Error(message, { cause: error });
+  }
+
+  if (response.redirected || (response.url && response.url !== url)) {
+    throw new Error(`${url}: unexpected redirect to ${response.url}`);
+  }
+  if (response.status !== 401) {
+    throw new Error(
+      `${url}: anonymous read answered HTTP ${response.status}, not the expected 401 credential rejection`,
+    );
+  }
+  let body;
+  try {
+    body = await response.json();
+  } catch (error) {
+    throw new Error(`${url}: 401 body did not parse as JSON (${error.message})`);
+  }
+  if (body?.error !== MARKET_REJECTION_MESSAGE) {
+    throw new Error(
+      `${url}: 401 JSON error changed -- expected ${JSON.stringify(MARKET_REJECTION_MESSAGE)}, ` +
+        `got ${JSON.stringify(body?.error)}`,
+    );
+  }
+  return true;
+};
+
 const failureMessage = (settledResults) =>
   settledResults
     .filter((result) => result.status === "rejected")
@@ -216,19 +268,20 @@ export const checkLiveTruth = async ({
   const results = await Promise.allSettled([
     fetchText(endpoints.llms, fetchImpl),
     fetchText(endpoints.official, fetchImpl),
+    fetchMeRejection(endpoints.me, fetchImpl),
   ]);
   const failures = results.filter((result) => result.status === "rejected");
 
   if (failures.length > 0) {
-    const bothUnavailable =
-      failures.length === 2 &&
+    const allUnavailable =
+      failures.length === results.length &&
       failures.every(
         (result) => result.reason instanceof FetchUnavailableError,
       );
-    if (bothUnavailable && !requireNetwork) {
+    if (allUnavailable && !requireNetwork) {
       return {
         skipped: true,
-        notice: `SKIP live truth: ${endpoints.llms} and ${endpoints.official} are offline (${failureMessage(results)})`,
+        notice: `SKIP live truth: ${endpoints.llms}, ${endpoints.official}, and ${endpoints.me} are offline (${failureMessage(results)})`,
       };
     }
     const prefix = requireNetwork ? "live truth is required; " : "";
@@ -259,7 +312,7 @@ if (isDirectRun) {
     console.log(
       result.skipped
         ? result.notice
-        : "Live truth check passed for llms.txt and /api/official.",
+        : "Live truth check passed for llms.txt, /api/official, and the /api/me rejection message.",
     );
   } catch (error) {
     console.error(`Live truth check failed: ${error.message}`);

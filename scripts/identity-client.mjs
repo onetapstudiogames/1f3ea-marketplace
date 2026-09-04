@@ -825,6 +825,20 @@ function storeSecret(origin, label, payload, deps = {}) {
 class SecretReadFailure extends Error {}
 
 /**
+ * Thrown only by promoteReplacementKey's `refuseIfPresent` re-check below,
+ * when the lock-protected read finds a live vault entry that was not there
+ * when the caller's own pre-flight check ran. Its default `.message` is
+ * worded for register()'s specific meaning of that situation -- a
+ * concurrent registration won a race for the same handle -- which is wrong
+ * for a caller like `key adopt` that never registered anything and is only
+ * trying to promote an already-known-good staged key. A typed class (rather
+ * than matching on `.message` text) lets each caller catch this one
+ * specific case and reword it for its own meaning, while every other
+ * failure out of promoteReplacementKey still surfaces as a plain Error.
+ */
+class LiveVaultEntryExistsError extends Error {}
+
+/**
  * The counterpart to storeSecret: reads back the JSON bundle this script
  * wrote for `label`. Returns `{ found: false, value: null }` when nothing is
  * stored there. Returns `{ found: true, value }` when the stored entry was
@@ -1017,7 +1031,56 @@ function promoteLockPath(origin, handle, homeDir) {
  * an unlocked re-check would. Same "staging copy kept, caller-worded
  * message" shape as the SecretReadFailure case above.
  */
-function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeFields, deps = {}, { refuseIfPresent = false } = {}) {
+function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeFields, deps = {}, {
+  refuseIfPresent = false,
+  // Caller-supplied noun phrase for the key this call is promoting, used in
+  // every failure message below instead of a hardcoded "replacement" --
+  // round-2's item-2 finding was a first-time registration told an agent
+  // "the old key ... no longer works" when there was no old key and
+  // nothing was replaced. Every caller names its own truth:
+  //   register():                  'the confirmed merchant key from this registration'
+  //   rotate():                     'the confirmed replacement key from this rotation'
+  //   recoverBegin():               'the confirmed replacement key from this recovery'
+  //   adopt() into an empty slot:   'the already-authenticated key this adopt is moving'
+  //   adopt() over a dead live entry: 'the already-authenticated replacement key this adopt is moving'
+  keyNoun = 'the already-confirmed key',
+  // Non-null only for callers where the entry at `handle` held a key the
+  // market has already invalidated server-side by the time this runs
+  // (rotate(), recoverBegin(), and adopt() when it proved the live entry
+  // dead) -- used only in the storeSecret-failure message below, which
+  // must not claim an "old key... no longer works" for register() or for
+  // adopt() promoting into a handle with no prior entry.
+  oldKeyNoun = null,
+  // The leading clause of the storeSecret-failure message, spoken only when
+  // oldKeyNoun is non-null. Defaults to the rotate()/recoverBegin() shape
+  // ("the rotation/recovery already CONFIRMED, so ..."), since those are
+  // the two callers that always held this default before adopt() started
+  // calling this function too. adopt() passes its own clause -- it neither
+  // rotated nor recovered anything, so the default would misstate what
+  // happened (round-3 LOW finding).
+  deadKeyClause = 'the rotation/recovery already CONFIRMED',
+  // Names the callers a lock-timeout message enumerates as possibly holding
+  // the lock concurrently. Defaults to the three callers that held this
+  // function's lock before adopt() became a fourth (round-3 LOW finding) --
+  // adopt() passes its own phrase so the enumeration names every real
+  // caller instead of silently omitting itself.
+  concurrentCallersPhrase = 'another registration, rotation, or recovery',
+  // adopt() alone, and only when it found a live entry at `handle` and
+  // proved it dead (or malformed) with its OWN outer read and probe --
+  // both of which run OUTSIDE this function's lock, before it is ever
+  // called. That gap is a real window (round-4 LOW finding): it spans a
+  // full network round trip (the live probe's own timeout budget) plus a
+  // vault read, not something sub-millisecond. Passing the exact
+  // merchant_key adopt already read and probed (or `null` when the live
+  // entry it saw held none) lets this call re-verify, under the lock, with
+  // no extra network call: string-compare it against what a fresh
+  // readSecret sees right here, in the same locked section as the write
+  // below. undefined (the default) means "no such check" -- every other
+  // caller, and adopt() promoting into a slot it found genuinely empty
+  // (refuseIfPresent:true instead), never sets this.
+  expectPreviousKey = undefined,
+} = {}) {
+  const capitalizedKeyNoun = keyNoun.charAt(0).toUpperCase() + keyNoun.slice(1)
   const lockPath = promoteLockPath(origin, handle, deps.homeDir)
   mkdirSync(dirname(lockPath), { recursive: true, mode: 0o700 })
   const result = withFileLock(lockPath, () => {
@@ -1027,10 +1090,72 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
     } catch (error) {
       throw new Error(
         `refusing to overwrite the existing vault entry for "${handle}": ${error.message}. ` +
-        'The already-confirmed replacement key was NOT lost -- it is still stored under the ' +
-        `staging label "${stagingLabel}". Resolve the unreadable entry, read the replacement key back ` +
-        `from "${stagingLabel}", then store it under "${handle}" yourself.`,
+        `${capitalizedKeyNoun} was NOT lost -- it is still stored under the ` +
+        `staging label "${stagingLabel}". Resolve the unreadable entry, then run ` +
+        `\`key adopt --handle ${handle} --from-label ${stagingLabel}\` to move it -- or, if that is not ` +
+        `available, read it back from "${stagingLabel}" yourself and store it under ` +
+        `"${handle}" by hand.`,
       )
+    }
+    if (expectPreviousKey !== undefined) {
+      // Re-verify, under the lock, with no extra network call: the entry
+      // this call is about to overwrite must still be byte-identical to
+      // the one the caller already read and proved dead OUTSIDE the lock.
+      // A mismatch means a concurrent write to this exact handle landed in
+      // the window between that outer check and this one -- round-4 LOW
+      // finding: adopt used to promote unconditionally past this point,
+      // silently destroying whatever a concurrent register/rotate/recover/
+      // adopt had just written, and blaming the overwrite on a rejection of
+      // an entry that no longer existed at write time.
+      const actualKey = previous.found && typeof previous.value?.merchant_key === 'string'
+        ? previous.value.merchant_key
+        : null
+      if (actualKey !== expectPreviousKey) {
+        let stagingStillPresent
+        try {
+          stagingStillPresent = readSecret(origin, stagingLabel, deps).found
+        } catch {
+          stagingStillPresent = false
+        }
+        // Round-5 LOW finding: this message used to always assert that a
+        // concurrent WRITE landed and tell the caller to compare "which of
+        // the two entries" they want -- but a mismatch also fires when the
+        // live entry was simply DELETED in this same window. That leaves
+        // only ONE entry (the staging copy, if it is still there) and
+        // nothing to compare it against, so the "which of the two" wording
+        // asserts something untrue in that case. Branch the whole message,
+        // not just its lead clause: a vanished entry gets its own honest
+        // wording, with its own remedy -- a plain re-run promotes into the
+        // now-empty slot -- and never mentions a second entry that does not
+        // exist; an entry that is still present but holds a different key
+        // keeps the original "concurrent write, compare the two" wording.
+        if (!previous.found) {
+          const deletedNote = stagingStillPresent
+            ? `${capitalizedKeyNoun} is still stored under the staging label "${stagingLabel}" and nowhere else.`
+            : `${capitalizedKeyNoun} is NO LONGER at its staging label "${stagingLabel}" either -- it cannot be ` +
+              'recovered from this vault. Check whatever recorded the merchant_key when it was first confirmed ' +
+              '(terminal scrollback, a captured --reveal run) before concluding it is gone for good.'
+          throw new LiveVaultEntryExistsError(
+            `refusing to overwrite the vault entry for "${handle}": the entry that was there when this adopt's ` +
+            'own check ran has since been deleted -- there is nothing left to compare, and nothing was ' +
+            `overwritten. Re-run this exact adopt command to promote ${keyNoun} into the now-empty handle. ` +
+            deletedNote,
+          )
+        }
+        const stagingNote = stagingStillPresent
+          ? `${capitalizedKeyNoun} was NOT lost -- it is still stored under the ` +
+            `staging label "${stagingLabel}" and nowhere else. Work out which of the two entries is the one ` +
+            `you actually want (for example \`key status --handle ${handle}\`), then store the key from ` +
+            `"${stagingLabel}" under "${handle}" yourself if it turns out to be the one that should have won.`
+          : `${capitalizedKeyNoun} is NO LONGER at its staging label "${stagingLabel}" ` +
+            '-- it cannot be recovered from this vault. Check whatever recorded the merchant_key when it was ' +
+            'first confirmed (terminal scrollback, a captured --reveal run) before concluding it is gone for good.'
+        throw new LiveVaultEntryExistsError(
+          `refusing to overwrite the vault entry for "${handle}": it changed between this adopt's own check ` +
+          'and this write -- a concurrent write to this same handle on this host must have landed in between, ' +
+          `so nothing was overwritten. ${stagingNote}`,
+        )
+      }
     }
     if (refuseIfPresent && previous.found) {
       // With the lock above held for this entire read-check-write section,
@@ -1063,17 +1188,16 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
         stagingStillPresent = false
       }
       const stagingNote = stagingStillPresent
-        ? `The confirmed merchant key from THIS registration was NOT lost -- it is still stored under the ` +
+        ? `${capitalizedKeyNoun} was NOT lost -- it is still stored under the ` +
           `staging label "${stagingLabel}" and nowhere else. Work out which of the two entries is the one ` +
           `you actually want (for example \`key status --handle ${handle}\`), then store the key from ` +
           `"${stagingLabel}" under "${handle}" yourself if it turns out to be the one that should have won.`
-        : `The confirmed merchant key from THIS registration is NO LONGER at its staging label "${stagingLabel}" ` +
-          '-- it cannot be recovered from this vault. Check whatever recorded the merchant_key when this ' +
-          'registration confirmed (terminal scrollback, a captured --reveal run) before concluding it is ' +
-          'gone for good.'
-      throw new Error(
+        : `${capitalizedKeyNoun} is NO LONGER at its staging label "${stagingLabel}" ` +
+          '-- it cannot be recovered from this vault. Check whatever recorded the merchant_key when it was ' +
+          'first confirmed (terminal scrollback, a captured --reveal run) before concluding it is gone for good.'
+      throw new LiveVaultEntryExistsError(
         `refusing to overwrite the vault entry for "${handle}" that now exists: it was not there when this ` +
-        'registration started, so a concurrent run on this host must have won the race for this handle. ' +
+        'call started, so a concurrent write to this same handle on this host must have won the race. ' +
         stagingNote,
       )
     }
@@ -1089,9 +1213,13 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
       }, deps)
     } catch (error) {
       throw new Error(
-        `the rotation/recovery already CONFIRMED, so the old key for "${handle}" no longer works: ${error.message}. ` +
-        `The replacement key is stored under "${stagingLabel}" and nowhere else -- read it back from ` +
-        `"${stagingLabel}", then store it under "${handle}" yourself before doing anything else.`,
+        (oldKeyNoun
+          ? `${deadKeyClause}, so ${oldKeyNoun} for "${handle}" no longer works: ${error.message}. `
+          : `storing ${keyNoun} under "${handle}" failed: ${error.message}. `) +
+        `${capitalizedKeyNoun} is stored under "${stagingLabel}" and nowhere else -- run ` +
+        `\`key adopt --handle ${handle} --from-label ${stagingLabel}\` to move it, or, if that is not ` +
+        `available, read it back from "${stagingLabel}" yourself and store it under "${handle}" before doing ` +
+        'anything else.',
       )
     }
     deleteSecret(origin, stagingLabel, deps)
@@ -1108,10 +1236,12 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
     // written anything.
     throw new Error(
       `could not acquire the per-handle vault lock for "${handle}" on this host within ` +
-      `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: another registration, rotation, or recovery for the same handle ` +
-      'appears to still be running concurrently on this host. The already-confirmed replacement key was NOT ' +
+      `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: ${concurrentCallersPhrase} for the same handle ` +
+      `appears to still be running concurrently on this host. ${capitalizedKeyNoun} was NOT ` +
       `lost -- it is still stored under the staging label "${stagingLabel}" and nowhere else. Retry once the ` +
-      `other run finishes, or read the key back from "${stagingLabel}" and store it under "${handle}" yourself.`,
+      `other run finishes -- either the original command, or \`key adopt --handle ${handle} --from-label ` +
+      `${stagingLabel}\` -- or, if that is not available, read the key back from "${stagingLabel}" and store ` +
+      `it under "${handle}" yourself.`,
     )
   }
   return result
@@ -1185,6 +1315,19 @@ function isStagingLabel(label, indexMap) {
  * "--pending-" going forward, so a live merchant's label can no longer
  * collide with this shape (see isPendingLabel's own doc comment for the
  * same reasoning, applied to the broader staging check).
+ *
+ * The AND above is ordered deliberately: isStagingLabel is evaluated FIRST,
+ * and it consults `indexMap`'s own `staging` marker before ever falling
+ * back to a suffix guess (see its own doc comment) -- so a real merchant
+ * handle that happens to match the `--pending-registration-<hex>` suffix
+ * shape (HANDLE_RE permits up to 32 characters, long enough to collide by
+ * coincidence, e.g. "abc--pending-registration-a") is never misclassified
+ * here: the index's `staging: false` short-circuits the `&&` to false
+ * before the suffix regex on the right ever matters, regardless of whether
+ * the text happens to match it. The suffix regex on its own is authoritative
+ * only where the index is silent about a label (no entry, or an entry with
+ * no boolean `staging`) -- never used to override what the index already
+ * knows.
  */
 function isRegistrationStagingLabel(label, indexMap) {
   return isStagingLabel(label, indexMap) && /--pending-registration-[0-9a-f]+$/u.test(label)
@@ -1625,9 +1768,10 @@ async function register(flags) {
       `registration: it does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved ` +
       '"--pending-" sequence this script uses for its own in-flight staging labels. The merchant was already ' +
       'created server-side under that exact spelling, and its confirmed merchant key and recovery codes were ' +
-      `NOT lost -- they are still stored under the staging label "${stagingLabel}" and nowhere else. Read ` +
-      `them back from "${stagingLabel}" and store them under a label of your choosing yourself; this script ` +
-      'will not do so automatically for a handle that fails its own naming rule.',
+      `NOT lost -- they are still stored under the staging label "${stagingLabel}" and nowhere else. This ` +
+      'script will not store them automatically for a handle that fails its own naming rule; `key show ' +
+      `--handle ${stagingLabel} --reveal\` reads them back by hand, and \`key adopt\` has no use here since ` +
+      'it also refuses a handle that fails this same rule -- whatever label you choose must satisfy it too.',
     )
   }
 
@@ -1643,7 +1787,10 @@ async function register(flags) {
   const location = promoteReplacementKey(origin, finalHandle, stagingLabel, staged.merchant_key, () => ({
     client_class: clientClass,
     recovery_codes: staged.recovery_codes,
-  }), {}, { refuseIfPresent: !replaceVaultEntry })
+  }), {}, {
+    refuseIfPresent: !replaceVaultEntry,
+    keyNoun: 'the confirmed merchant key from this registration',
+  })
 
   revealOrHide(flags, 'Merchant key', [staged.merchant_key])
   revealOrHide(flags, 'Recovery codes (all eight)', staged.recovery_codes)
@@ -1750,7 +1897,10 @@ async function rotate(flags) {
   const location = promoteReplacementKey(origin, staged.handle, stagingLabel, staged.merchant_key, () => ({
     client_class: clientClass,
     recovery_codes_invalidated_at: new Date().toISOString(),
-  }))
+  }), {}, {
+    keyNoun: 'the confirmed replacement key from this rotation',
+    oldKeyNoun: 'the old key',
+  })
 
   // Print the already-validated staged.handle -- the label this rotation
   // actually just wrote to, two lines up -- never the confirm response's own
@@ -1897,8 +2047,8 @@ async function recoverGenerate(flags) {
     // this lock exists to close.
     throw new Error(
       `could not acquire the per-handle vault lock for "${generated.handle}" on this host within ` +
-      `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: another registration, rotation, or recovery for the same handle ` +
-      'appears to still be running concurrently on this host. The market already minted new recovery codes ' +
+      `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: another registration, rotation, recovery, or adopt for the same ` +
+      'handle appears to still be running concurrently on this host. The market already minted new recovery codes ' +
       'for this handle server-side; nothing was written to this vault here. Retry once the other run finishes.',
     )
   }
@@ -1986,7 +2136,10 @@ async function recoverBegin(flags) {
   const location = promoteReplacementKey(origin, staged.handle, stagingLabel, staged.merchant_key, previous => ({
     ...(previous?.client_class ? { client_class: previous.client_class } : {}),
     recovery_codes_invalidated_at: new Date().toISOString(),
-  }))
+  }), {}, {
+    keyNoun: 'the confirmed replacement key from this recovery',
+    oldKeyNoun: 'the old key',
+  })
 
   // Print the already-validated staged.handle -- the label this recovery
   // actually just wrote to, two lines up -- never the confirm response's own
@@ -2069,4 +2222,5 @@ if (isMainModule) {
 export {
   storeSecret, readSecret, deleteSecret, listVaultLabels, promoteReplacementKey, SecretReadFailure, shouldReveal,
   HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE, isValidModel, parseKeychainServiceNames, unescapeSecurityDumpString,
+  LiveVaultEntryExistsError,
 }

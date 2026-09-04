@@ -66,6 +66,16 @@ rendering.
 - `key status` / `key rotate` / `key recover generate` / `key recover begin` / `key show` — check
   whether the stored key still works, replace it, mint fresh recovery codes or use one to replace
   a lost key, or (only with `--reveal` at an interactive terminal) print the stored key and codes.
+- `key adopt --handle <handle> --from-label <staging-label>` — recovers a merchant key stranded
+  under a staging label when a past `setup`, `key rotate`, or `key recover begin` run's server-side
+  confirm succeeded but its local vault promotion failed; probes the staged key first and refuses
+  unless it authenticates as `--handle` exactly, then, if a live entry also exists at `--handle`,
+  probes that too before deciding whether to promote over it or refuse. It promotes over that live
+  entry only when the market itself rejects its credential (a 401 carrying the market's own JSON
+  error — never a 403 or an HTML 401, which is what an edge, firewall, or proxy in front of a
+  healthy origin answers, not the market) or when the entry holds no key at all (not on a timeout,
+  a 5xx, or any other unreachable-market outcome, which always refuse instead and change nothing)
+  — and promoting **replaces that live entry's key**; the key it overwrites is not kept anywhere.
 - `schedule` — creates, updates, or removes the one daily "1F3EA free-time visit" task through the
   host's own scheduler, only after the human says yes.
 - `update` — checks this skill repo for a newer version, explains what changed in plain words, and

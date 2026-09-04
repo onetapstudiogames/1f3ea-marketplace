@@ -492,7 +492,7 @@ test('promoteReplacementKey refuses to swallow a write failure after the server 
     assert.throws(
       () => promoteReplacementKey(origin, handle, stagingLabel, 'new-key', (previous) => ({
         ...(previous?.client_class ? { client_class: previous.client_class } : {}),
-      }), deps),
+      }), deps, { keyNoun: 'the confirmed replacement key from this rotation', oldKeyNoun: 'the old key' }),
       (error) => {
         assert.match(error.message, /old key.*no longer works/iu, 'names the old key as already dead')
         assert.match(
@@ -501,6 +501,121 @@ test('promoteReplacementKey refuses to swallow a write failure after the server 
           'names the staging label where the confirmed replacement key still lives',
         )
         assert.doesNotMatch(error.message, /new-key|old-key/u, 'never includes the raw key values')
+        return true
+      },
+    )
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+// --- Round-2 item 2 (MEDIUM): promoteReplacementKey's storeSecret-failure ---
+// and unreadable-existing-entry messages take a caller-supplied keyNoun/
+// oldKeyNoun pair instead of a hardcoded "replacement key" / "rotation or
+// recovery" framing, so a first-time registration is never told about an
+// "old key" that never existed. register()/adopt() (into an empty slot)
+// pass oldKeyNoun: null; rotate()/recoverBegin()/adopt() (over a proven-dead
+// live entry) pass oldKeyNoun: 'the old key' / 'the dead live key'.
+
+test('promoteReplacementKey\'s storeSecret-failure message never claims an "old key" when the caller passes no oldKeyNoun (register()\'s own shape)', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'promote-write-fail-register'
+  const stagingLabel = `${handle}--pending-registration-deadbeef`
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') throw new Error('not found')
+    if (command === 'security' && args[0] === '-i') throw new Error('keychain is locked')
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'new-key', () => ({}), deps, {
+        keyNoun: 'the confirmed merchant key from this registration',
+        oldKeyNoun: null,
+      }),
+      (error) => {
+        assert.doesNotMatch(error.message, /old key/iu, 'a first registration has no old key to describe as dead')
+        assert.doesNotMatch(error.message, /rotation\/recovery already CONFIRMED/u, 'never reads as a rotation')
+        assert.match(error.message, /storing the confirmed merchant key from this registration under/u)
+        assert.match(
+          error.message,
+          new RegExp(`key adopt --handle ${handle} --from-label ${stagingLabel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'),
+        )
+        return true
+      },
+    )
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('promoteReplacementKey\'s unreadable-existing-entry message names the caller\'s own keyNoun, not a generic "replacement key"', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'promote-unreadable-live'
+  const stagingLabel = `${handle}--pending-rotation`
+  // A corrupt (non-JSON-after-decode) keychain entry: readSecret's darwin
+  // branch throws SecretReadFailure for this, not "not found".
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') {
+      return Buffer.from('not valid json', 'utf8').toString('base64')
+    }
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'new-key', () => ({}), deps, {
+        keyNoun: 'the confirmed replacement key from this rotation',
+        oldKeyNoun: 'the old key',
+      }),
+      (error) => {
+        assert.match(error.message, /refusing to overwrite the existing vault entry for "promote-unreadable-live"/u)
+        assert.match(error.message, /The confirmed replacement key from this rotation was NOT lost/u)
+        assert.match(
+          error.message,
+          new RegExp(`key adopt --handle ${handle} --from-label ${stagingLabel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'),
+        )
+        return true
+      },
+    )
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+// --- Round-3 LOW finding: the storeSecret-failure message's leading -------
+// clause used to hardcode "the rotation/recovery already CONFIRMED" for
+// EVERY caller that passed a non-null oldKeyNoun, including adopt() -- which
+// neither rotated nor recovered anything. deadKeyClause lets each caller
+// say what actually happened; rotate()/recoverBegin() keep the historic
+// default, adopt() passes its own.
+
+test('promoteReplacementKey\'s storeSecret-failure message never claims a "rotation/recovery" for adopt() promoting over a proven-dead live entry', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'promote-write-fail-adopt'
+  const stagingLabel = `${handle}--pending-registration-deadbeef`
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') {
+      throw new Error('not found')
+    }
+    if (command === 'security' && args[0] === '-i') throw new Error('keychain is locked')
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'new-key', () => ({}), deps, {
+        keyNoun: 'the already-authenticated replacement key this adopt is moving',
+        oldKeyNoun: 'the previous entry at this handle',
+        deadKeyClause: "this adopt's own check already found the previous entry unusable",
+      }),
+      (error) => {
+        assert.doesNotMatch(error.message, /rotation\/recovery already CONFIRMED/u, 'adopt ran neither a rotation nor a recovery')
+        assert.match(error.message, /this adopt's own check already found the previous entry unusable/u)
+        assert.match(error.message, /the previous entry at this handle for "promote-write-fail-adopt" no longer works/u)
         return true
       },
     )
@@ -576,6 +691,163 @@ test('promoteReplacementKey with refuseIfPresent:true still writes normally when
   try {
     const location = promoteReplacementKey(origin, handle, stagingLabel, 'brand-new-key', () => ({ client_class: 'coding_persistent' }), deps, { refuseIfPresent: true })
     assert.match(location, /macOS Keychain/u)
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+// --- Round-3 LOW finding: `key adopt` now passes refuseIfPresent:true ----
+// (from scripts/key.mjs) whenever it believed the slot at --handle was
+// genuinely empty, closing the TOCTOU window between its own outer read and
+// the locked write -- and the message the locked re-check throws in that
+// case used to hardcode "registration" unconditionally (the only caller
+// that had ever passed refuseIfPresent:true before this fix). Proves the
+// race message is generic (built from the caller's own keyNoun) rather than
+// claiming a registration that never happened, for adopt's exact call shape
+// (keyNoun/oldKeyNoun/refuseIfPresent as scripts/key.mjs's adopt() passes
+// them into an empty slot).
+
+test('promoteReplacementKey with refuseIfPresent:true, called with adopt\'s own keyNoun, never claims a "registration" raced -- the class of bug fixed for register() must not resurface for adopt()', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'adopt-race-handle'
+  // Deliberately rotation-shaped, not registration-shaped, so the word
+  // "registration" cannot appear in this message via the label name itself
+  // -- the assertion below is checking the CLAUSE the code writes, not
+  // incidentally matching the staging label's own spelling.
+  const stagingLabel = `${handle}--pending-rotation-deadbeef`
+  const liveValue = { kind: 'merchant', handle, client_class: 'coding_persistent', merchant_key: 'won-the-race-key', origin }
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') {
+      return Buffer.from(JSON.stringify(liveValue), 'utf8').toString('base64')
+    }
+    if (command === 'security' && args[0] === '-i') {
+      throw new Error('this test must never reach a write attempt')
+    }
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'the-adopted-key', () => ({}), deps, {
+        refuseIfPresent: true,
+        keyNoun: 'the already-authenticated key this adopt is moving',
+        oldKeyNoun: null,
+      }),
+      (error) => {
+        assert.match(error.message, /now exists/u, 'names the race, not a generic write failure')
+        assert.doesNotMatch(error.message, /registration/iu, 'adopt never ran a registration -- this must not claim one')
+        assert.match(
+          error.message,
+          /The already-authenticated key this adopt is moving was NOT lost/u,
+          "uses adopt's own keyNoun, not a hardcoded phrase",
+        )
+        assert.match(error.message, new RegExp(stagingLabel.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')), 'points at the staging label')
+        assert.doesNotMatch(error.message, /won-the-race-key|the-adopted-key/u, 'never includes a raw key value')
+        return true
+      },
+    )
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+// --- Round-5 LOW finding: promoteReplacementKey's expectPreviousKey -------
+// mismatch refusal always asserted a concurrent WRITE landed and told the
+// caller to compare "which of the two entries" they want -- but it also
+// fires when the live entry was simply DELETED in the window between
+// adopt's own outer read/probe and this locked re-check, leaving only ONE
+// entry and nothing to compare. The message now branches on whether
+// `readSecret` even finds anything at `handle` inside the lock.
+
+test('promoteReplacementKey: expectPreviousKey mismatch against a DELETED entry gets its own honest wording, not the "concurrent write, compare the two" message', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'promote-vanished-handle'
+  const stagingLabel = `${handle}--pending-rotation-deadbeef`
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') {
+      // readSecret sees nothing at all -- the entry was deleted, not
+      // replaced, inside the window between adopt's outer check and this
+      // locked re-check.
+      throw new Error('not found')
+    }
+    if (command === 'security' && args[0] === '-i') {
+      throw new Error('this test must never reach a write attempt')
+    }
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'the-adopted-key', () => ({}), deps, {
+        expectPreviousKey: 'the-key-adopt-already-probed-and-found-dead',
+        keyNoun: 'the already-authenticated replacement key this adopt is moving',
+        oldKeyNoun: 'the previous entry at this handle',
+        deadKeyClause: "this adopt's own check already found the previous entry unusable",
+      }),
+      (error) => {
+        assert.match(error.message, /has since been deleted/u)
+        assert.match(error.message, /nothing left to compare/u)
+        assert.match(error.message, /[Rr]e-run this exact adopt command/u)
+        assert.doesNotMatch(
+          error.message,
+          /a concurrent write to this same handle on this host must have landed/u,
+          'nothing was written -- it was deleted, not replaced',
+        )
+        assert.doesNotMatch(
+          error.message,
+          /which of the two entries/u,
+          'only the staging copy is left -- there is no second entry to compare against',
+        )
+        assert.doesNotMatch(error.message, /the-adopted-key|the-key-adopt-already-probed-and-found-dead/u, 'never includes a raw key value')
+        return true
+      },
+    )
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('promoteReplacementKey: expectPreviousKey mismatch against an entry REPLACED by a different key keeps the "concurrent write, compare the two" wording', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'promote-replaced-handle'
+  const stagingLabel = `${handle}--pending-rotation-deadbeef`
+  const liveValue = { kind: 'merchant', handle, client_class: 'coding_persistent', merchant_key: 'someone-elses-new-key', origin }
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') {
+      // readSecret finds a DIFFERENT key than the one adopt already probed
+      // and found dead -- a concurrent write landed, it was not deleted.
+      return Buffer.from(JSON.stringify(liveValue), 'utf8').toString('base64')
+    }
+    if (command === 'security' && args[0] === '-i') {
+      throw new Error('this test must never reach a write attempt')
+    }
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'the-adopted-key', () => ({}), deps, {
+        expectPreviousKey: 'the-key-adopt-already-probed-and-found-dead',
+        keyNoun: 'the already-authenticated replacement key this adopt is moving',
+        oldKeyNoun: 'the previous entry at this handle',
+        deadKeyClause: "this adopt's own check already found the previous entry unusable",
+      }),
+      (error) => {
+        assert.match(error.message, /changed between this adopt's own check and this write/u)
+        assert.match(error.message, /a concurrent write to this same handle on this host must have landed in between/u)
+        assert.match(error.message, /which of the two entries/u)
+        assert.doesNotMatch(error.message, /has since been deleted/u, 'an entry IS present -- it was replaced, not deleted')
+        assert.doesNotMatch(
+          error.message,
+          /someone-elses-new-key|the-adopted-key|the-key-adopt-already-probed-and-found-dead/u,
+          'never includes a raw key value',
+        )
+        return true
+      },
+    )
   } finally {
     rmSync(homeDir, { recursive: true, force: true })
   }
@@ -667,6 +939,52 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
       await rm(homeDir, { recursive: true, force: true })
     }
   })
+
+  // isRegistrationStagingLabel must consult the index BEFORE the
+  // `--pending-registration-<hex>` suffix test, matching isStagingLabel's
+  // own precedence -- a label the index positively marks `staging: false`
+  // is real merchant metadata even when its shape also matches the suffix
+  // pendingLabel('registration') mints (HANDLE_RE permits handles up to 32
+  // characters, long enough to collide by coincidence).
+  test(
+    `listVaultLabels (${backendPlatform}): a real merchant whose handle matches the registration-staging ` +
+    'suffix shape is still listed, and never surfaced as registrationStagingLabels',
+    { skip },
+    async () => {
+      const origin = 'https://example.invalid'
+      const homeDir = await mkdtemp(join(tmpdir(), `identity-client-staging-${backendPlatform}-`))
+      const deps = { platform: backendPlatform, homeDir, execFileSync: () => '' }
+      // Matches BOTH HANDLE_RE (max 32 chars) and the registration-staging
+      // suffix shape (`--pending-registration-<hex>`), the exact coincidence
+      // this precedence test exists to cover.
+      const handle = 'abc--pending-registration-a'
+      try {
+        storeSecret(origin, handle, {
+          kind: 'merchant',
+          handle,
+          client_class: 'coding_persistent',
+          merchant_key: `1f3ea_sk_${'c'.repeat(48)}`,
+          origin,
+        }, deps)
+
+        const labels = listVaultLabels(origin, deps)
+        assert.deepEqual(
+          labels,
+          [handle],
+          'a real merchant is never dropped just because its handle also matches the registration-staging suffix shape',
+        )
+        assert.deepEqual(
+          labels.registrationStagingLabels,
+          undefined,
+          'the index\'s staging:false marker wins over the suffix shape -- this is never surfaced as an ' +
+          'abandoned registration staging label',
+        )
+      } finally {
+        deleteSecret(origin, handle, deps)
+        await rm(homeDir, { recursive: true, force: true })
+      }
+    },
+  )
 
   test(`listVaultLabels (${backendPlatform}): a genuine staging entry is never listed`, { skip }, async () => {
     const origin = 'https://example.invalid'
