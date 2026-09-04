@@ -113,8 +113,21 @@ function requireStoredKey(handle) {
     process.exitCode = 1
     return null
   }
-  if (!stored.found || typeof stored.value?.merchant_key !== 'string') {
+  // Split the same way show() below already does: "no entry at all" and "an
+  // entry exists but carries no merchant_key" are different states, and
+  // conflating them into one "no vault entry found" message contradicts
+  // show() for the very same handle, and contradicts the mismatch refusal
+  // in promoteReplacementKey that sends the agent to `key status` to "work
+  // out which of the two entries is the one you actually want" -- an agent
+  // following that pointer must not be told no entry exists one line after
+  // being told an entry is there.
+  if (!stored.found) {
     console.error(`key: no vault entry found for "${handle}" at ${origin}.`)
+    process.exitCode = 1
+    return null
+  }
+  if (typeof stored.value?.merchant_key !== 'string') {
+    console.error(`key: a vault entry exists for "${handle}" at ${origin}, but it carries no merchant_key field.`)
     process.exitCode = 1
     return null
   }
