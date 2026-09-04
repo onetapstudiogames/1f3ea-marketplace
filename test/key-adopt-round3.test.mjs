@@ -1,12 +1,14 @@
 // Permanent coverage for the round-3 review of `key adopt`
 // (scripts/key.mjs): the only state that may ever be treated as "the live
 // entry is dead" is a probe the market answered with an actual credential
-// rejection (HTTP 401/403). Every other probe outcome -- a transport
-// failure, or a successful probe naming a different merchant -- must
-// refuse without touching anything. These tests reproduce, then pin, the
-// two destructive states the round-3 review found (scratchpad/
-// pr14c-adopt-states.mjs scenarios D and I), plus the MEDIUM/LOW findings
-// alongside them.
+// rejection -- an HTTP 401 whose body is the market's own parsed JSON
+// error, never a 403 and never any other 401 shape (round-4 finding,
+// covered separately in test/key-adopt-round4.test.mjs). Every other probe
+// outcome -- a transport failure, or a successful probe naming a different
+// merchant -- must refuse without touching anything. These tests
+// reproduce, then pin, the two destructive states the round-3 review found
+// (scratchpad/pr14c-adopt-states.mjs scenarios D and I), plus the
+// MEDIUM/LOW findings alongside them.
 //
 // The stub market server (test/helpers/stub-market-server.mjs) only ever
 // answers GET /api/me with 200 or 401, so the transport-failure tests below
