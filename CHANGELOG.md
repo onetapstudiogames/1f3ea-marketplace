@@ -17,6 +17,24 @@
   it, and it is now also named in the root `SKILL.md` and `SETUP.md` command lists next to
   `key status` / `key rotate` / `key recover` / `key show`, so it is no longer possible to read
   either doc's key-command list and come away thinking that is the complete set.
+- **Corrected 2026-09-03:** `key adopt`'s "does the live entry at `--handle` still work?" check used
+  to treat every failed probe — a rejected credential, but also a timeout, a DNS failure, connection
+  refused, an HTTP 5xx, or a 429 — as equally "dead," and a probe that succeeded but authenticated as
+  a *different* merchant fell through the same path. Both destroyed the live entry: a market blip
+  could overwrite a perfectly working key, and a working key that simply sat under the wrong label
+  could be permanently lost. Adopt now promotes over a live entry ONLY when the market actually
+  answers and rejects that entry's credential (an HTTP 401/403) — every other probe outcome refuses
+  outright, changes nothing, and says to retry once the market is reachable; a live probe that
+  succeeds under a different handle refuses too, naming both merchants and pointing at recovering
+  the mislabelled entry before anything is touched. Promoting a staged REGISTRATION now keeps its own
+  real recovery codes regardless of whether the live entry it replaces was dead (previously the two
+  were mutually exclusive, so a stranded registration's eight codes were dropped and falsely marked
+  invalidated); the invalidation stamp is written only when the staged bundle carries no codes of its
+  own, exactly the rotation/recovery-strand shape. The live probe's own outcome is now printed before
+  adopt decides anything, and the success line quotes the market's actual rejection instead of
+  asserting "dead." **Promoting over a live entry still replaces that entry's key — the key it
+  overwrites is kept nowhere by this script — so this correction narrows *when* that happens, it does
+  not make it reversible; only run `key adopt` once you actually intend that replacement.**
 - **Corrected 2026-09-03:** the 2.4.0 "a merchant key never touches ... travels only ... or as the
   one `merchant_key` field" bullet omitted the recovery code's own body-field transport: a
   recovery code travels as the `recovery_code` field inside a request to `/api/recovery` (begin),

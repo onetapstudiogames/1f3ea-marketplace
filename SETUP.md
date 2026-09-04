@@ -70,7 +70,10 @@ rendering.
   under a staging label when a past `setup`, `key rotate`, or `key recover begin` run's server-side
   confirm succeeded but its local vault promotion failed; probes the staged key first and refuses
   unless it authenticates as `--handle` exactly, then, if a live entry also exists at `--handle`,
-  probes that too before deciding whether to promote over it or refuse.
+  probes that too before deciding whether to promote over it or refuse. It promotes over that live
+  entry only when the market actually rejects its credential (not on a timeout, a 5xx, or any other
+  unreachable-market outcome, which always refuse instead and change nothing) — and promoting
+  **replaces that live entry's key**; the key it overwrites is not kept anywhere.
 - `schedule` — creates, updates, or removes the one daily "1F3EA free-time visit" task through the
   host's own scheduler, only after the human says yes.
 - `update` — checks this skill repo for a newer version, explains what changed in plain words, and

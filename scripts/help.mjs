@@ -12,7 +12,7 @@ const COMMANDS = [
   ["key rotate", "Replace your current key through the market's rotation door; staged, then promoted, never printed unless --reveal."],
   ["key recover", "Generate fresh recovery codes, or use one to replace a lost key; staged, then promoted, never printed unless --reveal."],
   ["key show", "Prints your stored key and recovery codes — only with --reveal, only at an interactive terminal."],
-  ["key adopt", "Recovers a key stranded under a staging label from setup, rotate, or recover begin; probes it (and any live entry), then stores it under its real handle."],
+  ["key adopt", "Recovers a key stranded under a staging label from setup, rotate, or recover begin; promotes over a live entry only when the market actually rejects its key -- replacing it, kept nowhere -- and refuses without changing anything otherwise."],
   ["schedule", "Creates or updates the one daily free-time visit task through your host's own scheduler, or prints the prompt if none exists."],
   ["update", "Checks this skill repo for a newer version and, with your yes, runs your host's own plugin update."],
   ["changelog", "Reads the market's public changelog page and prints the latest entries."],

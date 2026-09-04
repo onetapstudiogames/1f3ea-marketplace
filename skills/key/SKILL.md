@@ -51,13 +51,24 @@ only when explicitly told to reveal.
   `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" adopt --handle <the base handle> --from-label <the exact staging label the refusal named>`
   and print its output verbatim. It reads the staged key, probes `GET /api/me` with it (the same
   disclosed authenticated read every other command here runs), refuses outright unless that probe
-  actually authenticates as `--handle`. If something also already lives under `--handle`, it probes
-  that too: a live entry that still authenticates leaves both copies as working keys, and adopt
-  refuses to pick one — read both (`key show --handle <handle> --reveal` and `key show --handle
-  <staging label> --reveal`) before deleting either; a live entry that does NOT authenticate is
-  the shape a stranded rotation or recovery leaves, and adopt promotes the staged key over it.
-  Either way, only the staging copy is ever deleted, and only once the real handle actually holds
-  the working key — never printing the key itself.
+  actually authenticates as `--handle`. If something also already lives under `--handle`, it
+  probes that too, and every outcome is disclosed before adopt decides anything:
+  - Still authenticates as `--handle` → both copies are working keys; adopt refuses to pick one —
+    read both (`key show --handle <handle> --reveal` and `key show --handle <staging label>
+    --reveal`) before deleting either.
+  - Authenticates as a **different** handle → that entry is not dead, it belongs to someone else;
+    adopt refuses, names both handles, and points at recovering the mislabelled entry
+    (`key show --reveal`, then `key adopt` under its real handle) before anything is touched.
+  - The market actually **rejects** the credential (a 401/403 read as "this key does not work") —
+    the shape a stranded rotation or recovery leaves — adopt promotes the staged key over it.
+    **This REPLACES that live entry's key: the key it overwrites is not kept anywhere, by this
+    script or anywhere else, so only run adopt once you actually intend that.**
+  - Anything else (a timeout, a DNS failure, connection refused, a 5xx, a 429 — the market simply
+    could not be reached or answered) is **never** treated as dead; adopt refuses, changes nothing,
+    and says to retry once the market is reachable.
+
+  The staging copy is deleted only once the real handle actually holds the working key, and only
+  on the paths above that actually promote — never printing the key itself.
 
 Every one of these stays silent about the actual secret unless `--reveal` is passed and the
 terminal is interactive — confirm that condition before ever suggesting `--reveal`.
