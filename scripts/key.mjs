@@ -156,7 +156,26 @@ async function status() {
   const probe = await probeMe(origin, merchantKey, { allowOrigin })
   console.log(`handle: ${handle}`)
   if (!probe.ok) {
-    console.log(`stored key: does not work (${probe.error})`)
+    if (probe.rejected) {
+      console.log(`stored key: does not work (${probe.error})`)
+    } else {
+      // Same distinction `key adopt` draws on its own probes (round-3 HIGH
+      // finding 1, round-4 MEDIUM finding): a timeout, a DNS failure,
+      // connection refused, a 5xx, a 429, a 403, or an edge/gateway page in
+      // front of a healthy origin proves nothing about whether the key is
+      // dead. `key status` is the first command an agent runs to check a
+      // key, and its own refusal messages point back here -- collapsing
+      // this into "does not work" let a transient probe read as proof of
+      // death, and an agent that believed it could reasonably escalate to
+      // `key rotate` or `key recover begin`, both of which succeed against
+      // a healthy market and both of which irreversibly burn every
+      // recovery code, connector session, and delegated grant for a key
+      // that was never actually dead.
+      console.log(
+        `stored key: could not be verified right now (${probe.error}); this is not evidence the key is dead -- ` +
+        'retry when the market is reachable.',
+      )
+    }
     process.exitCode = 1
     return
   }
