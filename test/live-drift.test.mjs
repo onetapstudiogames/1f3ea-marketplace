@@ -108,6 +108,15 @@ test("reviewed live claims agree across official JSON and llms.txt", () => {
     () =>
       validateLiveTruth({
         official: reviewedOfficialFacts,
+        llmsText: reviewedLlmsClaims.replace("$1 USDC", "$2 USDC"),
+      }),
+    /official [(]amount[)]/iu,
+  );
+
+  assert.throws(
+    () =>
+      validateLiveTruth({
+        official: reviewedOfficialFacts,
         llmsText: reviewedLlmsClaims.replace("USDC", "USDT"),
       }),
     /currency/iu,
