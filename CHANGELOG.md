@@ -3,55 +3,36 @@
 ## [2.4.1] - 2026-09-03
 
 - Added `key adopt --handle <handle> --from-label <staging-label>`, to recover a merchant key
-  stranded under a staging label when a past run's server-side confirm succeeded but its local
-  vault promotion failed — a registration, a rotation, or a recovery. It probes `GET /api/me` with
-  the staged key, refuses unless that probe authenticates as `--handle` exactly, and only then
-  promotes it to the real label and deletes the staging copy. When something already lives at
-  `--handle`, adopt probes that too: if it still authenticates as `--handle`, both copies are
-  working keys and adopt refuses to pick one, pointing at reading both (`key show --handle
-  <handle> --reveal` and `key show --handle <staging-label> --reveal`) before deleting either; if
-  it does not — the shape a stranded rotation or recovery leaves, since the market has already
-  confirmed the new key and invalidated every recovery code by the time this runs — adopt promotes
-  the staged key over it and records the invalidation. `setup`'s own registration-staging refusal
-  points at it, and so do `rotate`'s and `recover begin`'s own stranded-key messages; `help` lists
-  it, and it is now also named in the root `SKILL.md` and `SETUP.md` command lists next to
-  `key status` / `key rotate` / `key recover` / `key show`, so it is no longer possible to read
-  either doc's key-command list and come away thinking that is the complete set.
-- **Corrected 2026-09-03:** `key adopt`'s "does the live entry at `--handle` still work?" check used
-  to treat every failed probe — a rejected credential, but also a timeout, a DNS failure, connection
-  refused, an HTTP 5xx, or a 429 — as equally "dead," and a probe that succeeded but authenticated as
-  a *different* merchant fell through the same path. Both destroyed the live entry: a market blip
-  could overwrite a perfectly working key, and a working key that simply sat under the wrong label
-  could be permanently lost. Adopt now promotes over a live entry ONLY when the market actually
-  answers and rejects that entry's credential (an HTTP 401/403) — every other probe outcome refuses
-  outright, changes nothing, and says to retry once the market is reachable; a live probe that
-  succeeds under a different handle refuses too, naming both merchants and pointing at recovering
-  the mislabelled entry before anything is touched. Promoting a staged REGISTRATION now keeps its own
-  real recovery codes regardless of whether the live entry it replaces was dead (previously the two
-  were mutually exclusive, so a stranded registration's eight codes were dropped and falsely marked
-  invalidated); the invalidation stamp is written only when the staged bundle carries no codes of its
-  own, exactly the rotation/recovery-strand shape. The live probe's own outcome is now printed before
-  adopt decides anything, and the success line quotes the market's actual rejection instead of
-  asserting "dead." **Promoting over a live entry still replaces that entry's key — the key it
-  overwrites is kept nowhere by this script — so this correction narrows *when* that happens, it does
-  not make it reversible; only run `key adopt` once you actually intend that replacement.**
-- **Corrected 2026-09-03:** the correction above described the credential-rejection check as "an
-  HTTP 401/403," and that was too wide: `GET /api/me` has no suspended or banned merchant state and
-  never answers 403 at all, so treating a 403 — or a 401 whose body was not the market's own JSON
-  error — as a rejection let anything sitting in front of a perfectly healthy origin (a Vercel
-  Firewall / Attack Challenge Mode page, a Cloudflare interstitial, a corporate proxy, a
-  deployment-protection page) destroy a working live key. `rejected` now fires only for a 401 whose
-  body parsed as JSON with a string `error` field — the one shape the market's own credential check
-  can produce — and a 403 or any other 401 refuses and changes nothing, same as a timeout or a 5xx
-  always did. Separately, the same correction never mentioned a fourth outcome the code already had:
-  a live entry that exists but carries no `merchant_key` at all is replaced with no probe at all,
-  since there is nothing there to lose — now stated plainly instead of only in the "credential
-  rejection" line. And the read-then-promote window that judges the live entry dead — a real window
-  spanning the live probe's own network round trip plus a vault read, not sub-millisecond — is now
-  re-verified with no extra network call, under `promoteReplacementKey`'s own per-handle lock,
-  immediately before the write: a concurrent registration, rotation, recovery, or adopt that lands a
-  NEW working key at the same handle inside that window is now detected and refused instead of
-  silently overwritten with a message that blamed a rejection of an entry no longer there.
+  stranded under a staging label when a past `setup`, `key rotate`, or `key recover begin` run's
+  server-side confirm succeeded but its local vault promotion failed. It probes `GET /api/me` with
+  the staged key and refuses unless that probe authenticates as `--handle` exactly. It then reads
+  and probes whatever currently lives at `--handle`, if anything: a live entry that still
+  authenticates as `--handle` — or as a *different* merchant — always refuses and changes nothing,
+  naming both entries so an agent can read each (`key show --handle <label> --reveal`) before
+  deciding by hand. A live entry promotes only when the market itself answers `GET /api/me` with a
+  401 carrying its own JSON credential error, or when that entry carries no `merchant_key` at all —
+  every other outcome (a 403, an HTML 401, a timeout, a 5xx, a 429, or a 401 JSON `error` that is
+  not the market's own) refuses and changes nothing rather than guessing, and prints its own probe
+  result before deciding anything either way. A promotion **replaces the previous key
+  irreversibly — the key it overwrites is kept nowhere by this script** — while a stranded
+  registration carries its own real recovery codes forward and a rotation/recovery strand records
+  the invalidation instead (the two were never mutually exclusive). The final write re-verifies,
+  under a per-handle lock with no extra network call, that the entry it is about to overwrite is
+  still the one this command already checked: a concurrent registration, rotation, recovery, or
+  adopt that lands a *different* key at the same handle in that window is detected and refused
+  instead of silently overwritten, and if that entry was deleted rather than replaced, the refusal
+  says so plainly instead of asking the caller to compare two entries when only one still exists.
+  `setup`'s own registration-staging refusal points at it, and so do `rotate`'s and `recover
+  begin`'s own stranded-key messages; `help`, the root `SKILL.md`, and `SETUP.md` all list it next
+  to `key status` / `key rotate` / `key recover` / `key show`.
+- `key status` now draws the same distinction `key adopt` draws on its own probes: a genuine
+  credential rejection prints "does not work," while a probe the market never actually answered
+  with one — a timeout, a 5xx, a 403, an edge/gateway page — prints "could not be verified right
+  now" and says to retry, instead of collapsing both into the same "does not work" verdict that
+  `key adopt`'s own refusal messages point an agent at, and that an agent could reasonably escalate
+  to `key rotate` or `key recover begin` over — both of which succeed against a healthy market and
+  both of which irreversibly invalidate every recovery code, connector session, authorization code,
+  and delegated grant for a key that was never actually dead.
 - **Corrected 2026-09-03:** the 2.4.0 "a merchant key never touches ... travels only ... or as the
   one `merchant_key` field" bullet omitted the recovery code's own body-field transport: a
   recovery code travels as the `recovery_code` field inside a request to `/api/recovery` (begin),
