@@ -127,7 +127,7 @@ export const validateLiveTruth = ({ official, llmsText }) => {
 
   // The listing-fee sentence must agree with official.listing_fee_usdc's own
   // live value, not a separately hardcoded "$1" that could go stale.
-  const feeLine = llmsText.split(/\r?\n/u).find((entry) => /listings? (?:cost|costs)/iu.test(entry));
+  const feeLine = llmsText.split(/\r?\n/u).find((entry) => /\$\d+(?:\.\d+)?\s+[A-Z]+\s+on\s+\w+/u.test(entry));
   requireClaim(Boolean(feeLine), "llms.txt listing-fee sentence disagrees with /api/official (sentence not found)");
   const feeSentence = compact(feeLine);
   requireClaim(
@@ -140,6 +140,10 @@ export const validateLiveTruth = ({ official, llmsText }) => {
     "llms.txt listing-fee sentence disagrees with /api/official (network)",
   );
   requireClaim(/\bx402\b/iu.test(feeSentence), "llms.txt listing-fee sentence disagrees with /api/official (x402 rail)");
+  requireClaim(
+    /direct seller-wallet-to-treasury transfer/iu.test(feeSentence),
+    "llms.txt listing-fee sentence disagrees with /api/official (direct transfer rail)",
+  );
 
   requireClaim(
     /front_door[\s\S]{0,200}official_facts/iu.test(normalizedLlms),
