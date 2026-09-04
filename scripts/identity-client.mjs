@@ -1051,6 +1051,20 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
   // must not claim an "old key... no longer works" for register() or for
   // adopt() promoting into a handle with no prior entry.
   oldKeyNoun = null,
+  // The leading clause of the storeSecret-failure message, spoken only when
+  // oldKeyNoun is non-null. Defaults to the rotate()/recoverBegin() shape
+  // ("the rotation/recovery already CONFIRMED, so ..."), since those are
+  // the two callers that always held this default before adopt() started
+  // calling this function too. adopt() passes its own clause -- it neither
+  // rotated nor recovered anything, so the default would misstate what
+  // happened (round-3 LOW finding).
+  deadKeyClause = 'the rotation/recovery already CONFIRMED',
+  // Names the callers a lock-timeout message enumerates as possibly holding
+  // the lock concurrently. Defaults to the three callers that held this
+  // function's lock before adopt() became a fourth (round-3 LOW finding) --
+  // adopt() passes its own phrase so the enumeration names every real
+  // caller instead of silently omitting itself.
+  concurrentCallersPhrase = 'another registration, rotation, or recovery',
 } = {}) {
   const capitalizedKeyNoun = keyNoun.charAt(0).toUpperCase() + keyNoun.slice(1)
   const lockPath = promoteLockPath(origin, handle, deps.homeDir)
@@ -1100,17 +1114,16 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
         stagingStillPresent = false
       }
       const stagingNote = stagingStillPresent
-        ? `The confirmed merchant key from THIS registration was NOT lost -- it is still stored under the ` +
+        ? `${capitalizedKeyNoun} was NOT lost -- it is still stored under the ` +
           `staging label "${stagingLabel}" and nowhere else. Work out which of the two entries is the one ` +
           `you actually want (for example \`key status --handle ${handle}\`), then store the key from ` +
           `"${stagingLabel}" under "${handle}" yourself if it turns out to be the one that should have won.`
-        : `The confirmed merchant key from THIS registration is NO LONGER at its staging label "${stagingLabel}" ` +
-          '-- it cannot be recovered from this vault. Check whatever recorded the merchant_key when this ' +
-          'registration confirmed (terminal scrollback, a captured --reveal run) before concluding it is ' +
-          'gone for good.'
+        : `${capitalizedKeyNoun} is NO LONGER at its staging label "${stagingLabel}" ` +
+          '-- it cannot be recovered from this vault. Check whatever recorded the merchant_key when it was ' +
+          'first confirmed (terminal scrollback, a captured --reveal run) before concluding it is gone for good.'
       throw new LiveVaultEntryExistsError(
         `refusing to overwrite the vault entry for "${handle}" that now exists: it was not there when this ` +
-        'registration started, so a concurrent run on this host must have won the race for this handle. ' +
+        'call started, so a concurrent write to this same handle on this host must have won the race. ' +
         stagingNote,
       )
     }
@@ -1127,7 +1140,7 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
     } catch (error) {
       throw new Error(
         (oldKeyNoun
-          ? `the rotation/recovery already CONFIRMED, so ${oldKeyNoun} for "${handle}" no longer works: ${error.message}. `
+          ? `${deadKeyClause}, so ${oldKeyNoun} for "${handle}" no longer works: ${error.message}. `
           : `storing ${keyNoun} under "${handle}" failed: ${error.message}. `) +
         `${capitalizedKeyNoun} is stored under "${stagingLabel}" and nowhere else -- run ` +
         `\`key adopt --handle ${handle} --from-label ${stagingLabel}\` to move it, or, if that is not ` +
@@ -1149,7 +1162,7 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
     // written anything.
     throw new Error(
       `could not acquire the per-handle vault lock for "${handle}" on this host within ` +
-      `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: another registration, rotation, or recovery for the same handle ` +
+      `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: ${concurrentCallersPhrase} for the same handle ` +
       `appears to still be running concurrently on this host. ${capitalizedKeyNoun} was NOT ` +
       `lost -- it is still stored under the staging label "${stagingLabel}" and nowhere else. Retry once the ` +
       `other run finishes -- either the original command, or \`key adopt --handle ${handle} --from-label ` +
@@ -1960,8 +1973,8 @@ async function recoverGenerate(flags) {
     // this lock exists to close.
     throw new Error(
       `could not acquire the per-handle vault lock for "${generated.handle}" on this host within ` +
-      `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: another registration, rotation, or recovery for the same handle ` +
-      'appears to still be running concurrently on this host. The market already minted new recovery codes ' +
+      `${VAULT_INDEX_LOCK_MAX_WAIT_MS}ms: another registration, rotation, recovery, or adopt for the same ` +
+      'handle appears to still be running concurrently on this host. The market already minted new recovery codes ' +
       'for this handle server-side; nothing was written to this vault here. Retry once the other run finishes.',
     )
   }
