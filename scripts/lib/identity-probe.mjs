@@ -11,17 +11,32 @@
 // key still works -- and nothing more. Never throws — callers get
 // { ok, handle, error, status, rejected } and decide what to say.
 //
-// `rejected` is true only when the market actually answered and refused the
-// credential (HTTP 401 or 403 on THIS read) -- the one case a caller may
-// safely treat as "this key is dead". Every other failure -- a timeout, a
-// DNS failure, connection refused, an HTTP 5xx, a 429, or any other
-// non-2xx/non-401/403 status -- leaves `rejected: false` alongside
-// `ok: false`, because none of those are the market telling anyone the
-// credential is bad; they are the market (or the network) being
-// unreachable, which proves nothing about the key. `status` carries the raw
-// HTTP status code when a response was received at all (undefined for a
-// pure transport failure, so a caller can still tell the two apart even
-// when `rejected` alone is not enough detail).
+// `rejected` is true only for an answer that can only have come from the
+// market's own credential check on THIS read: HTTP 401 with a body that
+// parsed as JSON and carries a string `error` field -- exactly the shape
+// GET /api/me answers a bad or missing bearer secret with, via
+// `err(c, 401, 'bad or missing bearer secret')` -> `c.json({ error:
+// message }, 401)` (ref-market src/collection-routes.ts, src/core.ts). The
+// market's /api/me never answers 403 at all -- there is no suspended or
+// banned merchant state anywhere in its schema or routes, and this path
+// carries no ownership check to fail one on -- so treating a 403 as a
+// rejection buys nothing except every intermediary's 403: a Vercel Firewall
+// / Attack Challenge Mode page, a Cloudflare interstitial, or a corporate
+// proxy sitting in front of a perfectly healthy origin all answer 403 too
+// (round-4 MEDIUM finding: `rejected` used to fire on ANY 401 or 403,
+// letting one of those pages make a caller destroy a working live key). The
+// same reasoning throws out an HTML 401: a Vercel deployment-protection
+// page answers 401 for a perfectly good key, and it carries no JSON `error`
+// string -- only the market's own answer does. Every other failure -- a
+// timeout, a DNS failure, connection refused, an HTTP 5xx, a 429, a 403, or
+// a 401 whose body did not parse as that exact shape -- leaves `rejected:
+// false` alongside `ok: false`, because none of those can only have come
+// from the market's own check; they are the market (or something standing
+// in front of it) being unreachable or unrecognized, which proves nothing
+// about the key. `status` still carries the raw HTTP status code whenever a
+// response was received at all (undefined only for a pure transport
+// failure), so a caller can always see what was actually seen even when
+// `rejected` alone is not enough detail.
 
 import { assertAllowedOrigin } from './origin-guard.mjs'
 
@@ -57,7 +72,7 @@ export async function probeMe(origin, merchantKey, { timeoutMs = DEFAULT_TIMEOUT
         ok: false,
         error: parsed?.error ?? `HTTP ${response.status}`,
         status: response.status,
-        rejected: response.status === 401 || response.status === 403,
+        rejected: response.status === 401 && parsed != null && typeof parsed.error === 'string',
       }
     }
     return { ok: true, handle: parsed.handle ?? null }
