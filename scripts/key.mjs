@@ -405,10 +405,13 @@ async function recoverBegin() {
  * currently lives at --handle -- and PROMOTES OVER IT, replacing that
  * entry's key, only when one of two things is true: nothing is there at
  * all, or the market's own probe of what IS there came back with an actual
- * credential rejection (an HTTP 401/403, disclosed via `rejected` on the
- * probe result from identity-probe.mjs) -- the shape a stranded rotation or
- * recovery leaves once the market has already confirmed the new key
- * server-side. Everything else refuses without changing anything:
+ * credential rejection -- an HTTP 401 whose body is the market's own JSON
+ * error (disclosed via `rejected` on the probe result from
+ * identity-probe.mjs; see that file's own doc comment for exactly why a 403
+ * or an HTML 401 never counts, round-4 MEDIUM finding) -- the shape a
+ * stranded rotation or recovery leaves once the market has already
+ * confirmed the new key server-side. Everything else refuses without
+ * changing anything:
  *
  *   - A transport failure on the live probe (timeout, DNS failure,
  *     connection refused, 5xx, 429, ...) is NOT proof the key is dead --
@@ -532,12 +535,16 @@ async function adopt() {
     return
   }
 
-  // Only a probe the market answered with an actual credential rejection
-  // (HTTP 401/403) ever counts as proof the live entry is dead. Every other
-  // outcome -- a transport failure, or a successful probe naming a
-  // DIFFERENT merchant -- refuses without touching anything (round-3 HIGH
-  // findings 1 and 2): destroying a key adopt never proved dead is worse
-  // than leaving a stranded staging copy in place one more run.
+  // Only a probe the market answered with an actual credential rejection --
+  // an HTTP 401 carrying the market's own JSON error body, never a 403 and
+  // never an HTML 401 (round-4 MEDIUM finding: those are what an edge, a
+  // firewall, or a proxy answers in front of a healthy origin, not what
+  // /api/me itself can ever produce) -- ever counts as proof the live entry
+  // is dead. Every other outcome -- a transport failure, or a successful
+  // probe naming a DIFFERENT merchant -- refuses without touching anything
+  // (round-3 HIGH findings 1 and 2): destroying a key adopt never proved
+  // dead is worse than leaving a stranded staging copy in place one more
+  // run.
   let liveIsDead = false
   let deadReason = null
   if (existingLive.found && typeof existingLive.value?.merchant_key !== 'string') {
@@ -639,6 +646,16 @@ async function adopt() {
       // proved dead (or malformed) above, refuseIfPresent stays false --
       // that is the overwrite this command exists to perform.
       refuseIfPresent: !existingLive.found,
+      // When adopt DID find an entry at --handle and proved it dead (or
+      // malformed) above, that read and probe both ran OUTSIDE this lock --
+      // a real window spanning a full network round trip plus a vault read
+      // (round-4 LOW finding), not sub-millisecond. Passing exactly what
+      // was seen there (the live merchant_key, or `null` when the entry
+      // held none at all) lets promoteReplacementKey re-verify it under the
+      // lock, with no extra network call, immediately before the write.
+      expectPreviousKey: existingLive.found
+        ? (typeof existingLive.value?.merchant_key === 'string' ? existingLive.value.merchant_key : null)
+        : undefined,
       keyNoun: liveIsDead
         ? 'the already-authenticated replacement key this adopt is moving'
         : 'the already-authenticated key this adopt is moving',

@@ -1065,6 +1065,20 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
   // adopt() passes its own phrase so the enumeration names every real
   // caller instead of silently omitting itself.
   concurrentCallersPhrase = 'another registration, rotation, or recovery',
+  // adopt() alone, and only when it found a live entry at `handle` and
+  // proved it dead (or malformed) with its OWN outer read and probe --
+  // both of which run OUTSIDE this function's lock, before it is ever
+  // called. That gap is a real window (round-4 LOW finding): it spans a
+  // full network round trip (the live probe's own timeout budget) plus a
+  // vault read, not something sub-millisecond. Passing the exact
+  // merchant_key adopt already read and probed (or `null` when the live
+  // entry it saw held none) lets this call re-verify, under the lock, with
+  // no extra network call: string-compare it against what a fresh
+  // readSecret sees right here, in the same locked section as the write
+  // below. undefined (the default) means "no such check" -- every other
+  // caller, and adopt() promoting into a slot it found genuinely empty
+  // (refuseIfPresent:true instead), never sets this.
+  expectPreviousKey = undefined,
 } = {}) {
   const capitalizedKeyNoun = keyNoun.charAt(0).toUpperCase() + keyNoun.slice(1)
   const lockPath = promoteLockPath(origin, handle, deps.homeDir)
@@ -1082,6 +1096,41 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
         `available, read it back from "${stagingLabel}" yourself and store it under ` +
         `"${handle}" by hand.`,
       )
+    }
+    if (expectPreviousKey !== undefined) {
+      // Re-verify, under the lock, with no extra network call: the entry
+      // this call is about to overwrite must still be byte-identical to
+      // the one the caller already read and proved dead OUTSIDE the lock.
+      // A mismatch means a concurrent write to this exact handle landed in
+      // the window between that outer check and this one -- round-4 LOW
+      // finding: adopt used to promote unconditionally past this point,
+      // silently destroying whatever a concurrent register/rotate/recover/
+      // adopt had just written, and blaming the overwrite on a rejection of
+      // an entry that no longer existed at write time.
+      const actualKey = previous.found && typeof previous.value?.merchant_key === 'string'
+        ? previous.value.merchant_key
+        : null
+      if (actualKey !== expectPreviousKey) {
+        let stagingStillPresent
+        try {
+          stagingStillPresent = readSecret(origin, stagingLabel, deps).found
+        } catch {
+          stagingStillPresent = false
+        }
+        const stagingNote = stagingStillPresent
+          ? `${capitalizedKeyNoun} was NOT lost -- it is still stored under the ` +
+            `staging label "${stagingLabel}" and nowhere else. Work out which of the two entries is the one ` +
+            `you actually want (for example \`key status --handle ${handle}\`), then store the key from ` +
+            `"${stagingLabel}" under "${handle}" yourself if it turns out to be the one that should have won.`
+          : `${capitalizedKeyNoun} is NO LONGER at its staging label "${stagingLabel}" ` +
+            '-- it cannot be recovered from this vault. Check whatever recorded the merchant_key when it was ' +
+            'first confirmed (terminal scrollback, a captured --reveal run) before concluding it is gone for good.'
+        throw new LiveVaultEntryExistsError(
+          `refusing to overwrite the vault entry for "${handle}": it changed between this adopt's own check ` +
+          'and this write -- a concurrent write to this same handle on this host must have landed in between, ' +
+          `so nothing was overwritten. ${stagingNote}`,
+        )
+      }
     }
     if (refuseIfPresent && previous.found) {
       // With the lock above held for this entire read-check-write section,
