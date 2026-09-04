@@ -62,6 +62,25 @@ import {
 } from './identity-client.mjs'
 import { assertAllowedOrigin } from './lib/origin-guard.mjs'
 
+// Every hard exit in this file (after `process.exitCode` is set) routes
+// through here instead of calling `process.exit()` directly. Reason: an
+// AbortSignal.timeout()-gated fetch (probeMe, probeOfficialDoors) leaves a
+// libuv timer/handle that is not always fully torn down by the time the
+// fetch's own await resolves, and calling process.exit() immediately after
+// two such fetches have run in the same process -- with or without a
+// spawnSync between them -- can race that teardown on some Windows Node
+// builds, crashing with an `UV_HANDLE_CLOSING` assertion
+// (src/win/async.c) and a garbage exit code (0xC0000409) instead of the
+// clean, correct exit this script always means to produce. This is the
+// same crash class the precomputedKeyCheck comment on `report` below
+// documents for the one-fetch case; a short drain here (long enough for a
+// pending libuv close callback to run) is what actually avoids it -- an
+// empty microtask turn (`setImmediate`) alone was not enough in testing.
+async function exitClean() {
+  await new Promise(resolvePromise => setTimeout(resolvePromise, 100))
+  process.exit()
+}
+
 function parseArgs(argv) {
   const flags = {}
   for (let i = 0; i < argv.length; i += 1) {
@@ -106,7 +125,7 @@ try {
 } catch (error) {
   console.error(`setup: ${error.message}`)
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 
 const identityClientPath = resolve(pluginRoot, 'scripts', 'identity-client.mjs')
@@ -135,7 +154,7 @@ try {
     'directly (for example `key status --handle <handle>` for the handle you suspect), then re-run setup.',
   )
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 
 // Throws SecretReadFailure (never silently returns keyWorks:false for it) --
@@ -181,7 +200,7 @@ async function verifyStoredKeyOrRefuse(handle, label) {
       're-run setup. Never create a second identity to work around an unreadable one.',
     )
     process.exitCode = 1
-    process.exit()
+    await exitClean()
   }
 }
 
@@ -295,7 +314,7 @@ if (existing?.handle) {
       'origin\'s entry from ~/.1f3ea/setup-state.json first, then re-run with --handle/--client-class.',
     )
     process.exitCode = 1
-    process.exit()
+    await exitClean()
   }
   if (ignoredHandle || ignoredClientClass) {
     say(
@@ -310,7 +329,7 @@ if (existing?.handle) {
   say('')
   await finishAsRepair(existing.handle, existing.client_class)
   console.log(lines.join('\n'))
-  process.exit(0)
+  await exitClean()
 }
 
 const handle = typeof flags.handle === 'string' ? flags.handle : null
@@ -325,7 +344,7 @@ if (!handle || !clientClass) {
     'human and the exact next command to run once you have a clear yes.',
   )
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 
 // Checked locally, before any approval step or network call, against the
@@ -339,7 +358,7 @@ if (!HANDLE_RE.test(handle)) {
     'that already matches this rule, then re-run.',
   )
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 
 // Same reservation identity-client.mjs's own register()/rotate() enforce --
@@ -353,7 +372,7 @@ if (RESERVED_HANDLE_SUBSTRING_RE.test(handle)) {
     'staging labels. Choose a handle that does not contain that sequence, then re-run.',
   )
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 
 // Same discipline as the handle check just above, applied to the other
@@ -365,7 +384,7 @@ if (RESERVED_HANDLE_SUBSTRING_RE.test(handle)) {
 if (clientClass !== 'coding_persistent' && clientClass !== 'coding_ephemeral') {
   console.error('setup: --client-class must be coding_persistent or coding_ephemeral.')
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 
 // Same discipline again, applied to --model: checked locally, before any
@@ -379,8 +398,21 @@ if (!isValidModel(requestedModel)) {
     'marks (the market\'s own validator refuses the same). Fix the model label, then re-run.',
   )
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
+
+// Enumerate this host's vault labels BEFORE either network probe below
+// (this one and the coding-client-doors probe further down) runs. Both
+// probes are AbortSignal.timeout()-gated fetches, and listVaultLabels
+// shells out synchronously (cmdkey /list on Windows, a Keychain dump on
+// macOS) -- the same interleaving the precomputedKeyCheck comment above
+// documents (a spawnSync sitting between two such fetches in one process
+// can trip a libuv UV_HANDLE_CLOSING assertion on some Windows builds,
+// crashing with a garbage exit code instead of the clean refusal below).
+// Doing the enumeration first, before either fetch starts, keeps the two
+// fetches adjacent with no spawnSync between them. Skipped entirely when
+// --new-identity was passed: nothing below reads it in that case.
+const allLabels = newIdentity ? null : listVaultLabels(origin)
 
 // Before ever attempting to register, check whether this host's vault
 // already has a WORKING key for the exact handle requested. A lost or
@@ -399,7 +431,7 @@ if (priorVaultEntry.mismatchedHandle) {
     'vault entry before retrying. Never overwrite it or register a fresh identity to work around this.',
   )
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 if (priorVaultEntry.keyWorks && !newIdentity) {
   say(`=== A working identity for "${handle}" at ${origin} already exists ===`)
@@ -408,7 +440,7 @@ if (priorVaultEntry.keyWorks && !newIdentity) {
   say('')
   await finishAsRepair(handle, clientClass, priorVaultEntry)
   console.log(lines.join('\n'))
-  process.exit(0)
+  await exitClean()
 }
 if (priorVaultEntry.keyWorks && newIdentity) {
   say(`--new-identity was passed, so proceeding to register "${handle}" even though a working vault entry`)
@@ -429,7 +461,6 @@ if (priorVaultEntry.keyWorks && newIdentity) {
 // recovery staging label, which is not a real registered identity) and
 // refuse outright unless --new-identity was passed.
 if (!newIdentity) {
-  const allLabels = listVaultLabels(origin)
   if (allLabels.incomplete) {
     // The Keychain (or Credential Manager) dump this enumeration relies on
     // did not finish -- ENOBUFS or ETIMEDOUT, per listVaultLabels' own
@@ -443,7 +474,7 @@ if (!newIdentity) {
       'blocking the dump, or pass --new-identity if a genuinely new merchant is really intended.',
     )
     process.exitCode = 1
-    process.exit()
+    await exitClean()
   }
   // A registration whose vault promotion failed can leave the confirmed
   // merchant key ONLY under its `--pending-registration-<hex>` staging
@@ -478,7 +509,7 @@ if (!newIdentity) {
       'is resolved and a genuinely new merchant, distinct from it, is still intended.',
     )
     process.exitCode = 1
-    process.exit()
+    await exitClean()
   }
   const otherLabels = allLabels.filter(label => label !== handle)
   if (otherLabels.length > 0) {
@@ -494,7 +525,7 @@ if (!newIdentity) {
       'listVaultLabels cannot always tell the two apart from a Credential Manager scrape alone.)',
     )
     process.exitCode = 1
-    process.exit()
+    await exitClean()
   }
 }
 
@@ -633,7 +664,7 @@ if (officialCheck.ok && !officialCheck.codingDoorsOpen) {
     'opens these doors.',
   )
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 
 const approval = await confirmHumanApproval()
@@ -651,7 +682,7 @@ if (!approval.approved) {
       '(no --human-approved) once a human is actually present to answer.',
     )
     process.exitCode = 1
-    process.exit()
+    await exitClean()
   }
   if (approval.declinedAfterToken) {
     // The token was genuinely valid (and is now spent) -- the interactive
@@ -665,7 +696,7 @@ if (!approval.approved) {
       'yes to put to the human.',
     )
     process.exitCode = 1
-    process.exit()
+    await exitClean()
   }
   console.error(
     `setup: before registering, put this exact question to the human: "${approvalQuestion(handle, clientClass)}" ` +
@@ -683,7 +714,7 @@ if (!approval.approved) {
     'record, not a defeated security control; this script never claims otherwise.',
   )
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 
 say(`=== Step 2: Register "${handle}" through the coding-client JSON identity door ===`)
@@ -775,7 +806,7 @@ if (flags.reveal === true) {
       '--reveal and read the key back afterward with `key show --reveal` at one.',
     )
     process.exitCode = 1
-    process.exit()
+    await exitClean()
   }
   console.log(lines.join('\n'))
   lines.length = 0
@@ -793,7 +824,7 @@ if (registerResult.status !== 0) {
   console.log(lines.join('\n'))
   console.error('setup: registration did not complete; nothing else below was configured.')
   process.exitCode = 1
-  process.exit()
+  await exitClean()
 }
 say('')
 
