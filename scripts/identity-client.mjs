@@ -1117,6 +1117,31 @@ function promoteReplacementKey(origin, handle, stagingLabel, merchantKey, mergeF
         } catch {
           stagingStillPresent = false
         }
+        // Round-5 LOW finding: this message used to always assert that a
+        // concurrent WRITE landed and tell the caller to compare "which of
+        // the two entries" they want -- but a mismatch also fires when the
+        // live entry was simply DELETED in this same window. That leaves
+        // only ONE entry (the staging copy, if it is still there) and
+        // nothing to compare it against, so the "which of the two" wording
+        // asserts something untrue in that case. Branch the whole message,
+        // not just its lead clause: a vanished entry gets its own honest
+        // wording, with its own remedy -- a plain re-run promotes into the
+        // now-empty slot -- and never mentions a second entry that does not
+        // exist; an entry that is still present but holds a different key
+        // keeps the original "concurrent write, compare the two" wording.
+        if (!previous.found) {
+          const deletedNote = stagingStillPresent
+            ? `${capitalizedKeyNoun} is still stored under the staging label "${stagingLabel}" and nowhere else.`
+            : `${capitalizedKeyNoun} is NO LONGER at its staging label "${stagingLabel}" either -- it cannot be ` +
+              'recovered from this vault. Check whatever recorded the merchant_key when it was first confirmed ' +
+              '(terminal scrollback, a captured --reveal run) before concluding it is gone for good.'
+          throw new LiveVaultEntryExistsError(
+            `refusing to overwrite the vault entry for "${handle}": the entry that was there when this adopt's ` +
+            'own check ran has since been deleted -- there is nothing left to compare, and nothing was ' +
+            `overwritten. Re-run this exact adopt command to promote ${keyNoun} into the now-empty handle. ` +
+            deletedNote,
+          )
+        }
         const stagingNote = stagingStillPresent
           ? `${capitalizedKeyNoun} was NOT lost -- it is still stored under the ` +
             `staging label "${stagingLabel}" and nowhere else. Work out which of the two entries is the one ` +
