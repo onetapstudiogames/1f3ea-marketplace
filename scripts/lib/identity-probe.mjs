@@ -9,7 +9,19 @@
 // passive-read mode: /api/me is GET-only (src/collection-routes.ts). Every
 // call site above says only that this read is authenticated -- proof the
 // key still works -- and nothing more. Never throws — callers get
-// { ok, handle, error } and decide what to say.
+// { ok, handle, error, status, rejected } and decide what to say.
+//
+// `rejected` is true only when the market actually answered and refused the
+// credential (HTTP 401 or 403 on THIS read) -- the one case a caller may
+// safely treat as "this key is dead". Every other failure -- a timeout, a
+// DNS failure, connection refused, an HTTP 5xx, a 429, or any other
+// non-2xx/non-401/403 status -- leaves `rejected: false` alongside
+// `ok: false`, because none of those are the market telling anyone the
+// credential is bad; they are the market (or the network) being
+// unreachable, which proves nothing about the key. `status` carries the raw
+// HTTP status code when a response was received at all (undefined for a
+// pure transport failure, so a caller can still tell the two apart even
+// when `rejected` alone is not enough detail).
 
 import { assertAllowedOrigin } from './origin-guard.mjs'
 
@@ -20,7 +32,7 @@ export async function probeMe(origin, merchantKey, { timeoutMs = DEFAULT_TIMEOUT
   try {
     safeOrigin = assertAllowedOrigin(origin, { allowOrigin })
   } catch (error) {
-    return { ok: false, error: error.message }
+    return { ok: false, error: error.message, rejected: false }
   }
   try {
     const response = await fetch(`${safeOrigin}/api/me`, {
@@ -41,11 +53,16 @@ export async function probeMe(origin, merchantKey, { timeoutMs = DEFAULT_TIMEOUT
       // handled below
     }
     if (!response.ok || !parsed) {
-      return { ok: false, error: parsed?.error ?? `HTTP ${response.status}` }
+      return {
+        ok: false,
+        error: parsed?.error ?? `HTTP ${response.status}`,
+        status: response.status,
+        rejected: response.status === 401 || response.status === 403,
+      }
     }
     return { ok: true, handle: parsed.handle ?? null }
   } catch (error) {
-    return { ok: false, error: error?.message ?? String(error) }
+    return { ok: false, error: error?.message ?? String(error), rejected: false }
   }
 }
 
