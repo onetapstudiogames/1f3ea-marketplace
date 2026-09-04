@@ -23,7 +23,7 @@ import { pluginRoot } from './lib/paths.mjs'
 import { readSetupState, SetupStateReadFailure } from './lib/identity-state.mjs'
 import { probeMe } from './lib/identity-probe.mjs'
 import {
-  readSecret, SecretReadFailure, HANDLE_RE, promoteReplacementKey, LiveVaultEntryExistsError,
+  readSecret, SecretReadFailure, HANDLE_RE, promoteReplacementKey,
 } from './identity-client.mjs'
 import { assertAllowedOrigin } from './lib/origin-guard.mjs'
 
@@ -402,17 +402,40 @@ async function recoverBegin() {
  * needed it to overwrite one. That left the two strand messages naming a
  * remedy that could never work in the state they name it from. So: once the
  * staged key has proven itself above, this also reads and probes whatever
- * currently lives at --handle. If nothing is there, or what is there does
- * NOT authenticate as --handle (the shape a stranded rotation/recovery
- * leaves), promoting over it is safe -- exactly the trust rotate()/
- * recoverBegin() themselves place in a freshly server-confirmed key -- and
- * the merge also stamps recovery_codes_invalidated_at, since a live entry
- * that no longer authenticates got that way through a rotation or recovery
- * the market already confirmed, which invalidates every recovery code
- * atomically. If the existing entry DOES still authenticate as --handle,
- * both it and the staged copy are working keys for the same merchant --
- * adopt refuses to pick one, and points at reading BOTH before either is
- * touched, never at deleting the one that just proved itself.
+ * currently lives at --handle -- and PROMOTES OVER IT, replacing that
+ * entry's key, only when one of two things is true: nothing is there at
+ * all, or the market's own probe of what IS there came back with an actual
+ * credential rejection (an HTTP 401/403, disclosed via `rejected` on the
+ * probe result from identity-probe.mjs) -- the shape a stranded rotation or
+ * recovery leaves once the market has already confirmed the new key
+ * server-side. Everything else refuses without changing anything:
+ *
+ *   - A transport failure on the live probe (timeout, DNS failure,
+ *     connection refused, 5xx, 429, ...) is NOT proof the key is dead --
+ *     round-3's HIGH finding was exactly this: a market blip used to
+ *     overwrite a perfectly working live key.
+ *   - A live probe that SUCCEEDS but names a different merchant is not a
+ *     dead entry either -- it is someone else's working key sitting under
+ *     the wrong label (round-3's other HIGH finding), and destroying the
+ *     only local copy of it is never the safe move.
+ *   - An entry that exists but carries no merchant_key at all is reported
+ *     explicitly before being replaced, rather than silently overwritten
+ *     with wording meant for an empty slot.
+ *
+ * If the existing entry DOES still authenticate as --handle, both it and
+ * the staged copy are working keys for the same merchant -- adopt refuses
+ * to pick one, and points at reading BOTH before either is touched, never
+ * at deleting the one that just proved itself.
+ *
+ * Recovery codes ride along in the merge whenever the STAGED bundle itself
+ * carries them (a registration strand does; a rotation/recovery strand
+ * never does), independent of whether the live entry was judged dead --
+ * the invalidation stamp (recovery_codes_invalidated_at) is written only
+ * when the staged bundle has none of its own to carry. When adopt found
+ * nothing at all at --handle, promoteReplacementKey is asked to re-check
+ * that under its own per-handle lock (refuseIfPresent), closing the window
+ * between this function's own read and the locked write where a concurrent
+ * register/rotate/recover could otherwise land unnoticed.
  */
 async function adopt() {
   const handle = typeof flags.handle === 'string' ? flags.handle : null
@@ -464,7 +487,19 @@ async function adopt() {
   const probe = await probeMe(origin, merchantKey, { allowOrigin })
   console.log('key adopt: probed the staged key with one authenticated GET /api/me read.')
   if (!probe.ok) {
-    console.error(`key adopt: the key stored under "${stagingLabel}" does not work (${probe.error}); refusing to adopt it.`)
+    if (probe.rejected) {
+      console.error(`key adopt: the key stored under "${stagingLabel}" does not work (${probe.error}); refusing to adopt it.`)
+    } else {
+      // The market did not answer with a credential rejection at all --
+      // a timeout, DNS failure, connection refused, 5xx, or 429 proves
+      // nothing about whether this key works (round-3 LOW finding: this
+      // used to say "does not work", blaming the key for a transport
+      // fault). Nothing has been touched yet either way.
+      console.error(
+        `key adopt: the key stored under "${stagingLabel}" could not be verified right now (${probe.error}); ` +
+        'nothing was changed. Retry this exact adopt command when the market is reachable.',
+      )
+    }
     process.exitCode = 1
     return
   }
@@ -497,10 +532,33 @@ async function adopt() {
     return
   }
 
+  // Only a probe the market answered with an actual credential rejection
+  // (HTTP 401/403) ever counts as proof the live entry is dead. Every other
+  // outcome -- a transport failure, or a successful probe naming a
+  // DIFFERENT merchant -- refuses without touching anything (round-3 HIGH
+  // findings 1 and 2): destroying a key adopt never proved dead is worse
+  // than leaving a stranded staging copy in place one more run.
   let liveIsDead = false
-  if (existingLive.found && typeof existingLive.value?.merchant_key === 'string') {
+  let deadReason = null
+  if (existingLive.found && typeof existingLive.value?.merchant_key !== 'string') {
+    // The entry exists but carries no usable key at all -- nothing to
+    // probe, and no working merchant could possibly be relying on it.
+    // Disclosed explicitly (round-3 LOW finding) instead of silently
+    // overwritten with the empty-slot wording, which never mentioned a
+    // replacement happened.
+    console.log(`key adopt: an entry exists at "${handle}" but holds no merchant_key; replacing it.`)
+    liveIsDead = true
+    deadReason = 'it held no merchant_key'
+  } else if (existingLive.found) {
     const liveProbe = await probeMe(origin, existingLive.value.merchant_key, { allowOrigin })
-    console.log(`key adopt: probed the existing entry at "${handle}" with one authenticated GET /api/me read.`)
+    // Disclosed every time, win or lose (round-3 MEDIUM finding): this read
+    // is the sole basis for whether adopt is about to overwrite a key, so
+    // its outcome is never left silent the way it used to be.
+    console.log(
+      liveProbe.ok
+        ? `key adopt: one me read on the existing entry at "${handle}": OK (handle: ${liveProbe.handle ?? 'unknown'}).`
+        : `key adopt: one me read on the existing entry at "${handle}": FAILED (${liveProbe.error}).`,
+    )
     if (liveProbe.ok && liveProbe.handle === handle) {
       // The live entry is ALSO a working key for this exact merchant --
       // nothing is stranded here, both copies are real. Never propose
@@ -517,12 +575,40 @@ async function adopt() {
       process.exitCode = 1
       return
     }
-    // The live entry did not authenticate as --handle at all (bad key,
-    // network error, or a mismatched handle) -- the shape a stranded
-    // rotation or recovery leaves behind once the market has already
-    // confirmed the new key server-side. Safe to promote the staged key
-    // over it.
+    if (liveProbe.ok) {
+      // The live entry WORKS -- just not as --handle. It belongs to a
+      // DIFFERENT merchant, not a dead entry (round-3 HIGH finding 2):
+      // destroying the only local copy of another merchant's working key
+      // is never safe just because it sits under the wrong label.
+      console.error(
+        `key adopt: refusing -- the vault entry at "${handle}" holds a key that WORKS, but authenticates as ` +
+        `"${liveProbe.handle}", not "${handle}" -- it belongs to a different merchant, not a dead entry. ` +
+        `Nothing was changed. Recover the mislabelled entry first: \`key show --handle ${handle} --reveal\` ` +
+        `reads it, and \`key adopt --handle ${liveProbe.handle} --from-label ${handle}\` moves it to its real ` +
+        `handle. The staged key at "${stagingLabel}" is untouched; re-run this adopt once "${handle}" is clear.`,
+      )
+      process.exitCode = 1
+      return
+    }
+    if (!liveProbe.rejected) {
+      // The market never actually rejected this credential -- a timeout,
+      // DNS failure, connection refused, 5xx, or 429 proves nothing about
+      // whether the key is dead (round-3 HIGH finding 1). Refuse rather
+      // than guess; nothing has been touched.
+      console.error(
+        `key adopt: could not verify whether the existing entry at "${handle}" is dead (${liveProbe.error}); ` +
+        'nothing was changed. Retry this exact adopt command once the market is reachable. The staged key at ' +
+        `"${stagingLabel}" is untouched.`,
+      )
+      process.exitCode = 1
+      return
+    }
+    // The market answered and rejected this credential outright -- the
+    // shape a stranded rotation or recovery leaves behind once it has
+    // already confirmed the new key server-side. Safe to promote the
+    // staged key over it.
     liveIsDead = true
+    deadReason = `the market rejected it (${liveProbe.error})`
   }
 
   let location
@@ -531,30 +617,37 @@ async function adopt() {
       ...(typeof stored.value.client_class === 'string'
         ? { client_class: stored.value.client_class }
         : previous?.client_class ? { client_class: previous.client_class } : {}),
-      ...(liveIsDead
-        ? { recovery_codes_invalidated_at: new Date().toISOString() }
-        : (Array.isArray(stored.value.recovery_codes) ? { recovery_codes: stored.value.recovery_codes } : {})),
+      // Recovery codes ride along whenever the staged bundle actually
+      // carries them (a registration strand does; a rotation/recovery
+      // strand never does) -- independent of whether the live entry was
+      // dead. The invalidation stamp is written only when the staged
+      // bundle has no codes of its own to carry (round-3 MEDIUM finding:
+      // these two used to be mutually exclusive, so a stranded
+      // registration's eight real recovery codes were dropped and falsely
+      // stamped invalidated).
+      ...(Array.isArray(stored.value.recovery_codes)
+        ? { recovery_codes: stored.value.recovery_codes }
+        : (liveIsDead ? { recovery_codes_invalidated_at: new Date().toISOString() } : {})),
     }), {}, {
+      // When adopt found NOTHING at --handle, the slot was genuinely empty
+      // as far as this run could tell -- refuseIfPresent:true asks
+      // promoteReplacementKey's own locked re-check to refuse instead of
+      // silently overwriting if a concurrent register/rotate/recover wins
+      // that handle in the window between this check and the lock (round-3
+      // LOW finding: this TOCTOU window used to be open, and the catch
+      // block below for it was dead code). When adopt found an entry it
+      // proved dead (or malformed) above, refuseIfPresent stays false --
+      // that is the overwrite this command exists to perform.
+      refuseIfPresent: !existingLive.found,
       keyNoun: liveIsDead
         ? 'the already-authenticated replacement key this adopt is moving'
         : 'the already-authenticated key this adopt is moving',
-      oldKeyNoun: liveIsDead ? 'the dead live key' : null,
+      oldKeyNoun: liveIsDead ? 'the previous entry at this handle' : null,
+      deadKeyClause: "this adopt's own check already found the previous entry unusable",
+      concurrentCallersPhrase: 'another registration, rotation, recovery, or adopt',
     })
   } catch (error) {
-    if (error instanceof LiveVaultEntryExistsError) {
-      // Not reachable today -- this call never passes refuseIfPresent,
-      // since the checks above already decided whether overwriting is
-      // safe. Kept as a safety net worded for adopt's own meaning, in case
-      // that ever changes, rather than register()'s concurrent-race
-      // wording.
-      console.error(
-        `key adopt: refusing -- a live entry for "${handle}" that authenticates as this handle appeared ` +
-        `between this adopt's own checks and its write. The staging copy at "${stagingLabel}" is untouched. ` +
-        `Read the live entry before deleting anything: \`key show --handle ${handle} --reveal\`.`,
-      )
-    } else {
-      console.error(`key adopt: ${error.message}`)
-    }
+    console.error(`key adopt: ${error.message}`)
     process.exitCode = 1
     return
   }
@@ -562,8 +655,8 @@ async function adopt() {
   console.log(`stored: ${location}`)
   console.log(
     liveIsDead
-      ? `key adopt: moved the confirmed key from "${stagingLabel}" to "${handle}", replacing the dead live ` +
-        'entry found there, and deleted the staging copy.'
+      ? `key adopt: moved the confirmed key from "${stagingLabel}" to "${handle}", replacing the entry found ` +
+        `there -- ${deadReason} -- and deleted the staging copy.`
       : `key adopt: moved the confirmed key from "${stagingLabel}" to "${handle}" and deleted the staging copy.`,
   )
 }
