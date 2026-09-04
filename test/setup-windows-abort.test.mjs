@@ -2,24 +2,29 @@
 // 5e03eb2, the round-5-approved commit; found on the release walk after
 // round 6's four items were already confirmed fixed):
 //
-// On Windows, `setup.mjs` aborts with a libuv `UV_HANDLE_CLOSING`
+// On Windows, `setup.mjs` used to abort with a libuv `UV_HANDLE_CLOSING`
 // assertion (`Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file
 // src\win\async.c, line 76`, exit code 0xC0000409 / 3221226505) instead of
 // exiting 1 cleanly, whenever a stored vault entry exists for the
 // requested handle and its /api/me probe answers anything but 200 (a 503,
-// a genuine market 401, or any other non-2xx). This only happens once TWO
-// AbortSignal.timeout()-gated fetches have run in the same process
+// a genuine market 401, or any other non-2xx). This only happened once TWO
+// AbortSignal.timeout()-gated fetches had run in the same process
 // (probeMe for the vault-adopt check, then probeOfficialDoors for the
-// coding-client-doors check) and setup then calls a hard `process.exit()`
-// -- the crash reproduces whether or not a spawnSync (`listVaultLabels`'s
-// `cmdkey /list`) sits between the two fetches, so the fix is not "never
-// interleave a spawnSync between them" alone: every `process.exit()` in
-// setup.mjs past that point now routes through a shared `exitClean()`
-// helper that drains briefly (a `setTimeout`, not just a `setImmediate` --
-// tested and found insufficient) before the actual exit, letting any
-// pending libuv timer/handle from a completed fetch settle first. See
-// test/setup-round7.test.mjs for the sibling repair-path exit-code finding
-// (1) found on the same walk.
+// coding-client-doors check) and setup then called a hard `process.exit()`
+// -- the crash reproduced whether or not a spawnSync (`listVaultLabels`'s
+// `cmdkey /list`) sat between the two fetches. A first fix routed every
+// `process.exit()` in setup.mjs through a shared `exitClean()` helper that
+// drained briefly (a `setTimeout`, not just a `setImmediate` -- tested and
+// found insufficient) before the actual exit -- this masked the crash on
+// an idle machine but was still a race: measured failure threshold 20-40ms
+// idle, and the shipped 100ms constant crashed a measured fraction of runs
+// under real CPU contention. The actual fix removes `process.exit()`
+// entirely: setup.mjs now only ever sets `process.exitCode` and lets the
+// module fall off the end naturally (see the comment above `class
+// SetupRefusal` in scripts/setup.mjs), which cannot race a libuv teardown
+// because nothing calls exit while a handle might still be closing. See
+// test/setup-repair-exit-code.test.mjs for the sibling repair-path
+// exit-code finding (1) found on the same walk.
 //
 // This is the reviewer's own scratchpad/pr14f-abort-matrix.mjs harness,
 // promoted to permanent coverage: same server shape, same request matrix,

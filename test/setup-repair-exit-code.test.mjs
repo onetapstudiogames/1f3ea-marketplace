@@ -13,9 +13,10 @@
 // verified does not actually work"), and CLAUDE.md rule 6 names honest
 // status codes as a hard rule -- yet `setup` printed "secret reference
 // works: no" and still exited 0, for a script whose entire job is
-// verifying a stored merchant key. Both call sites now route through a
-// bare `process.exit()`, honoring whatever `process.exitCode` `report()`
-// already set.
+// verifying a stored merchant key. Both call sites now let the module fall
+// off the end naturally (setup.mjs no longer calls `process.exit()` at
+// all -- see the comment above `class SetupRefusal` there), honoring
+// whatever `process.exitCode` `report()` already set.
 //
 // Reproduces scratchpad/pr14f-repair-exit0.mjs's three failure shapes
 // using the same controllable-HTTPS-server technique
