@@ -9,8 +9,10 @@ Never print, log, or pass along a key or recovery code yourself — only the scr
 only when explicitly told to reveal.
 
 - **`key status`** — run `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" status [--handle <handle>]`
-  and print its output verbatim. One authenticated `GET /api/me` read; reports only whether the
-  stored key works.
+  and print its output verbatim. One authenticated `GET /api/me` read; reports whether the
+  stored key works and, when it does not, whether the market genuinely rejected it or the read
+  merely could not be verified right now (a timeout, a 5xx, or anything else that is not the
+  market's own rejection) -- the latter is never reported as evidence the key is dead.
 - **`key rotate`** — after telling the human what this does (replaces your current key; the old
   one stops working the moment this confirms, AND every connector session, authorization code,
   and delegated grant this merchant had is revoked with it), run
