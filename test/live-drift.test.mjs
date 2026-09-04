@@ -5,6 +5,10 @@ import {
   checkLiveTruth,
   validateLiveTruth,
 } from "../scripts/check-live-truth.mjs";
+import { MARKET_REJECTION_MESSAGE } from "../scripts/lib/identity-probe.mjs";
+
+const meRejectionResponse = (errorText = MARKET_REJECTION_MESSAGE) =>
+  new Response(JSON.stringify({ error: errorText }), { status: 401 });
 
 const reviewedOfficialFacts = {
   domain: "https://1f3ea.com",
@@ -252,9 +256,54 @@ test("offline live checks skip honestly only outside required-network CI", async
   );
 });
 
+// Round-5 LOW finding's fix: scripts/lib/identity-probe.mjs pins
+// MARKET_REJECTION_MESSAGE -- an unpublished internal literal from a
+// separate repo (ref-market) -- as the ONLY string `key adopt` ever treats
+// as proof a live entry is dead. Pinning an unpublished string fails
+// CLOSED (a reword upstream would make adopt permanently refuse to repair
+// the exact stranded-key situation it exists for) unless something catches
+// the drift before it strands every future adopt -- this is that gate: an
+// anonymous GET (no bearer sent, no credential needed) that fails loudly
+// the moment the live market's own 401 JSON error stops matching.
+test("check:live-truth pins the market's exact /api/me rejection message, anonymously, no bearer sent", async () => {
+  let sawAuthHeader = null;
+  const happyFetch = async (url, init) => {
+    if (url.endsWith("llms.txt")) return new Response(reviewedLlmsClaims, { status: 200 });
+    if (url.endsWith("/api/me")) {
+      sawAuthHeader = init?.headers?.authorization ?? init?.headers?.Authorization ?? null;
+      return meRejectionResponse();
+    }
+    return new Response(JSON.stringify(reviewedOfficialFacts), { status: 200 });
+  };
+  const result = await checkLiveTruth({ fetchImpl: happyFetch, requireNetwork: false });
+  assert.equal(result.valid, true);
+  assert.equal(sawAuthHeader, null, "the /api/me pin sends no Authorization header -- it needs no credential");
+
+  const rewordedFetch = async (url) => {
+    if (url.endsWith("llms.txt")) return new Response(reviewedLlmsClaims, { status: 200 });
+    if (url.endsWith("/api/me")) return meRejectionResponse("invalid credentials");
+    return new Response(JSON.stringify(reviewedOfficialFacts), { status: 200 });
+  };
+  await assert.rejects(
+    () => checkLiveTruth({ fetchImpl: rewordedFetch, requireNetwork: false }),
+    /api\/me[\s\S]*401 JSON error changed/iu,
+  );
+
+  const wrongStatusFetch = async (url) => {
+    if (url.endsWith("llms.txt")) return new Response(reviewedLlmsClaims, { status: 200 });
+    if (url.endsWith("/api/me")) return new Response(JSON.stringify({ handle: "anyone" }), { status: 200 });
+    return new Response(JSON.stringify(reviewedOfficialFacts), { status: 200 });
+  };
+  await assert.rejects(
+    () => checkLiveTruth({ fetchImpl: wrongStatusFetch, requireNetwork: false }),
+    /api\/me[\s\S]*not the expected 401/iu,
+  );
+});
+
 test("a partial outage fails instead of pretending the live market is offline", async () => {
   const partialFetch = async (url) => {
     if (url.endsWith("llms.txt")) throw new TypeError("fetch failed");
+    if (url.endsWith("/api/me")) return meRejectionResponse();
     return new Response(JSON.stringify(reviewedOfficialFacts), { status: 200 });
   };
 
@@ -284,10 +333,11 @@ test("HTTP, redirect, malformed JSON, and unexpected fetch failures fail loudly"
     /unexpected redirect/iu,
   );
 
-  const malformedJsonFetch = async (url) =>
-    new Response(url.endsWith("llms.txt") ? reviewedLlmsClaims : "not json", {
-      status: 200,
-    });
+  const malformedJsonFetch = async (url) => {
+    if (url.endsWith("llms.txt")) return new Response(reviewedLlmsClaims, { status: 200 });
+    if (url.endsWith("/api/me")) return meRejectionResponse();
+    return new Response("not json", { status: 200 });
+  };
   await assert.rejects(
     () => checkLiveTruth({ fetchImpl: malformedJsonFetch }),
     /malformed JSON/iu,

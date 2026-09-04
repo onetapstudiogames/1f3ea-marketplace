@@ -752,6 +752,107 @@ test('promoteReplacementKey with refuseIfPresent:true, called with adopt\'s own 
   }
 })
 
+// --- Round-5 LOW finding: promoteReplacementKey's expectPreviousKey -------
+// mismatch refusal always asserted a concurrent WRITE landed and told the
+// caller to compare "which of the two entries" they want -- but it also
+// fires when the live entry was simply DELETED in the window between
+// adopt's own outer read/probe and this locked re-check, leaving only ONE
+// entry and nothing to compare. The message now branches on whether
+// `readSecret` even finds anything at `handle` inside the lock.
+
+test('promoteReplacementKey: expectPreviousKey mismatch against a DELETED entry gets its own honest wording, not the "concurrent write, compare the two" message', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'promote-vanished-handle'
+  const stagingLabel = `${handle}--pending-rotation-deadbeef`
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') {
+      // readSecret sees nothing at all -- the entry was deleted, not
+      // replaced, inside the window between adopt's outer check and this
+      // locked re-check.
+      throw new Error('not found')
+    }
+    if (command === 'security' && args[0] === '-i') {
+      throw new Error('this test must never reach a write attempt')
+    }
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'the-adopted-key', () => ({}), deps, {
+        expectPreviousKey: 'the-key-adopt-already-probed-and-found-dead',
+        keyNoun: 'the already-authenticated replacement key this adopt is moving',
+        oldKeyNoun: 'the previous entry at this handle',
+        deadKeyClause: "this adopt's own check already found the previous entry unusable",
+      }),
+      (error) => {
+        assert.match(error.message, /has since been deleted/u)
+        assert.match(error.message, /nothing left to compare/u)
+        assert.match(error.message, /[Rr]e-run this exact adopt command/u)
+        assert.doesNotMatch(
+          error.message,
+          /a concurrent write to this same handle on this host must have landed/u,
+          'nothing was written -- it was deleted, not replaced',
+        )
+        assert.doesNotMatch(
+          error.message,
+          /which of the two entries/u,
+          'only the staging copy is left -- there is no second entry to compare against',
+        )
+        assert.doesNotMatch(error.message, /the-adopted-key|the-key-adopt-already-probed-and-found-dead/u, 'never includes a raw key value')
+        return true
+      },
+    )
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
+test('promoteReplacementKey: expectPreviousKey mismatch against an entry REPLACED by a different key keeps the "concurrent write, compare the two" wording', () => {
+  const origin = 'https://example.invalid'
+  const handle = 'promote-replaced-handle'
+  const stagingLabel = `${handle}--pending-rotation-deadbeef`
+  const liveValue = { kind: 'merchant', handle, client_class: 'coding_persistent', merchant_key: 'someone-elses-new-key', origin }
+  const execFileSync = (command, args) => {
+    if (command === 'security' && args[0] === 'find-generic-password') {
+      // readSecret finds a DIFFERENT key than the one adopt already probed
+      // and found dead -- a concurrent write landed, it was not deleted.
+      return Buffer.from(JSON.stringify(liveValue), 'utf8').toString('base64')
+    }
+    if (command === 'security' && args[0] === '-i') {
+      throw new Error('this test must never reach a write attempt')
+    }
+    throw new Error(`unexpected exec call in this test: ${command} ${args.join(' ')}`)
+  }
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-client-promote-'))
+  const deps = { execFileSync, platform: 'darwin', homeDir }
+  try {
+    assert.throws(
+      () => promoteReplacementKey(origin, handle, stagingLabel, 'the-adopted-key', () => ({}), deps, {
+        expectPreviousKey: 'the-key-adopt-already-probed-and-found-dead',
+        keyNoun: 'the already-authenticated replacement key this adopt is moving',
+        oldKeyNoun: 'the previous entry at this handle',
+        deadKeyClause: "this adopt's own check already found the previous entry unusable",
+      }),
+      (error) => {
+        assert.match(error.message, /changed between this adopt's own check and this write/u)
+        assert.match(error.message, /a concurrent write to this same handle on this host must have landed in between/u)
+        assert.match(error.message, /which of the two entries/u)
+        assert.doesNotMatch(error.message, /has since been deleted/u, 'an entry IS present -- it was replaced, not deleted')
+        assert.doesNotMatch(
+          error.message,
+          /someone-elses-new-key|the-adopted-key|the-key-adopt-already-probed-and-found-dead/u,
+          'never includes a raw key value',
+        )
+        return true
+      },
+    )
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 // --- Finding 4: the non-secret vault index is now serialized with a -------
 // short-retry, stale-aware lockfile, so two updates in close succession
 // never clobber each other, and an abandoned lock is broken rather than
