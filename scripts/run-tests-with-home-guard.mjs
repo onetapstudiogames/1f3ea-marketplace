@@ -7,15 +7,12 @@
 // This exists because test/identity-commands.test.mjs, test/identity-client.test.mjs,
 // and test/vault-roundtrip-windows.test.mjs drive scripts/identity-client.mjs's
 // storeSecret/readSecret/deleteSecret/promoteReplacementKey/listVaultLabels
-// functions, all of which accept an injectable `homeDir` (see identity-client.mjs)
-// so a test can point the vault at a throwaway temp directory instead of the
-// real one -- but every one of those call sites has to actually pass it for
-// that to matter. A single missed `{ homeDir }` (as happened in the wave
-// this guard was added for -- roughly twenty call sites across two files)
-// silently grows the operator's real vault-index.json on every `npm test`
-// run, in a way no assertion inside any individual test would ever catch,
-// because each test only ever inspects the temp homeDir it itself created,
-// never the real one sitting untouched beside it.
+// functions. On Windows and macOS, an injected `homeDir` moves only the
+// non-secret index; the platform vault remains tied to the OS user. The
+// test-only loader below therefore makes vault-backends.mjs select its file
+// backend for the whole suite, while each test still supplies a throwaway
+// HOME. The before/after snapshots remain a final proof that the real home
+// and platform vault did not change.
 //
 // A single directory-tree diff around the WHOLE suite is deliberately the
 // last line of defense, not a replacement for passing `homeDir` correctly
@@ -351,9 +348,15 @@ function runGuard() {
   const vaultDir = join(homedir(), VAULT_DIR_NAME)
   const before = snapshotDir(vaultDir)
   const targetsBefore = snapshotPlatformVaultTargets()
+  const fileVaultLoaderUrl = new URL('../test/helpers/force-file-vault-loader.mjs', import.meta.url).href
 
+  const fileVaultNodeOption = `--import ${fileVaultLoaderUrl}`
   const result = spawnSync(process.execPath, ['--test', ...process.argv.slice(2)], {
     stdio: 'inherit',
+    env: {
+      ...process.env,
+      NODE_OPTIONS: [fileVaultNodeOption, process.env.NODE_OPTIONS].filter(Boolean).join(' '),
+    },
   })
 
   const after = snapshotDir(vaultDir)
@@ -362,6 +365,9 @@ function runGuard() {
 
   for (const message of messages) {
     console.error(`\nidentity-vault-home-guard: ${message}`)
+  }
+  if (!failed) {
+    console.error('\nidentity-vault-home-guard: no changes detected in the real home or platform vault')
   }
 
   if (failed) {

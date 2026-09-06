@@ -1,14 +1,15 @@
 // Shared plumbing for driving setup.mjs / connect.mjs / key.mjs /
 // identity-client.mjs as real subprocesses against a stub market server and a
-// throwaway per-test HOME, so these tests exercise the actual vault code
-// path (Windows Credential Manager, via the PowerShell CredWrite/CredRead
-// shim, on win32; the plain-file backend on POSIX runners) instead of a
-// mock of it.
+// throwaway per-test HOME. A test-only module loader makes vault-backends.mjs
+// select the plain-file backend on every OS, so no child can reach the host's
+// real credential store.
 
 import { spawn } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+
+const fileVaultNodeOption = `--import ${new URL('./force-file-vault-loader.mjs', import.meta.url).href}`
 
 /**
  * Creates a fresh throwaway "home" directory and returns the env overlay
@@ -87,12 +88,14 @@ function minimalBaseEnv() {
  */
 export function runNode(scriptPath, args, { input, env = {}, stdio } = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
+    const nodeOptions = [fileVaultNodeOption, env.NODE_OPTIONS].filter(Boolean).join(' ')
     const child = spawn(process.execPath, [scriptPath, ...args], {
       stdio: stdio ?? (input === undefined ? ['ignore', 'pipe', 'pipe'] : ['pipe', 'pipe', 'pipe']),
       env: {
         ...minimalBaseEnv(),
         NODE_TLS_REJECT_UNAUTHORIZED: '0',
         ...env,
+        NODE_OPTIONS: nodeOptions,
       },
     })
     let stdout = ''
@@ -101,8 +104,8 @@ export function runNode(scriptPath, args, { input, env = {}, stdio } = {}) {
     if (child.stderr) child.stderr.on('data', chunk => { stderr += chunk })
     child.on('error', rejectPromise)
     child.on('close', status => resolvePromise({ status, stdout, stderr }))
-    if (input !== undefined && child.stdin) {
-      child.stdin.write(input)
+    if (child.stdin) {
+      if (input !== undefined) child.stdin.write(input)
       child.stdin.end()
     }
   })

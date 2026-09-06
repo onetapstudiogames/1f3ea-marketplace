@@ -1,31 +1,15 @@
-// One real Windows Credential Manager round trip, using a fake key of the
+// One isolated file-vault round trip on Windows, using a fake key of the
 // exact merchant-key shape identity-client.mjs validates (never a real one):
 // write, read back, promote (via promoteReplacementKey, the same path
-// rotate()/recoverBegin() use), delete, then confirm with the real `cmdkey`
-// tool that nothing was left behind. This exercises the actual Win32
-// CredWrite/CredRead API through the PowerShell/.NET shim in
-// scripts/identity-client.mjs, not a mock — so it only runs on win32 and
-// skips honestly everywhere else (this repo's own CI runs on ubuntu-latest,
-// where the file-backend tests in identity-client.test.mjs cover the
-// equivalent round trip instead).
+// rotate()/recoverBegin() use), and delete. The suite's test-only module
+// loader makes vault-backends.mjs select its file backend under the throwaway
+// HOME, so this test never reaches Windows Credential Manager.
 //
-// The console evidence this test prints is redacted: it prints only that a
-// value round-tripped correctly (booleans/lengths), never the fake key or
-// recovery codes themselves, and never the `cmdkey /list` output's raw
-// lines beyond a redacted count/match check.
-//
-// The secret bundle itself deliberately goes to the REAL Windows Credential
-// Manager (that IS the thing under test) -- but every storeSecret/
-// promoteReplacementKey/deleteSecret call still passes a throwaway temp
-// homeDir, so the non-secret vault-index.json bookkeeping those write stays
-// confined to that temp directory and never touches the operator's real
-// ~/.1f3ea/vault-index.json. Cleanup goes through deleteSecret (same
-// homeDir) rather than a bare `cmdkey /delete`, so both the real credential
-// AND its temp-index entry are removed together, the same pairing every
-// other caller of storeSecret/deleteSecret relies on.
+// The console evidence is redacted: it prints only booleans and backend
+// names, never the fake key or recovery codes. Cleanup remains unconditional
+// so a failed assertion cannot leave data in the throwaway HOME.
 
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -42,14 +26,12 @@ const fakeKey = () => `1f3ea_sk_${randomBytes(24).toString('hex')}`
 const fakeRecoveryCode = () => `1f3ea_rc_${randomBytes(32).toString('hex')}`
 
 test(
-  'real Windows Credential Manager round trip: write, read back, promote, delete, confirm nothing left',
-  { skip: process.platform !== 'win32' && 'this probe only exercises the real win32 CredWrite/CredRead path' },
+  'Windows test suite file-vault round trip: write, read back, promote, delete',
+  { skip: process.platform !== 'win32' && 'this probe only exercises the test-isolated Windows path' },
   () => {
     const origin = `https://vault-roundtrip-test.invalid/${posix()}`
     const handle = `vault-test-${posix()}`
-    const target = `1f3ea:${origin}:${handle}`
     const stagingLabel = `${handle}--pending-rotation`
-    const stagingTarget = `1f3ea:${origin}:${stagingLabel}`
 
     const originalKey = fakeKey()
     const recoveryCodes = Array.from({ length: 8 }, () => fakeRecoveryCode())
@@ -73,8 +55,8 @@ test(
         recovery_codes: recoveryCodes,
         origin,
       }, deps)
-      console.log(`[vault-roundtrip] write: ok (${writeLocation.startsWith('Windows Credential Manager') ? 'Windows Credential Manager' : 'unexpected backend'})`)
-      assert.match(writeLocation, /^Windows Credential Manager/u)
+      console.log(`[vault-roundtrip] write: ok (${writeLocation.startsWith('local file') ? 'isolated local file' : 'unexpected backend'})`)
+      assert.match(writeLocation, /^local file/u)
 
       // --- read back: must equal exactly what was written ---------------
       const readBack = readSecret(origin, handle, deps)
@@ -96,7 +78,7 @@ test(
         ...(previous?.client_class ? { client_class: previous.client_class } : {}),
         ...(previous?.recovery_codes ? { recovery_codes: previous.recovery_codes } : {}),
       }), deps)
-      assert.match(promoteLocation, /^Windows Credential Manager/u)
+      assert.match(promoteLocation, /^local file/u)
       const afterPromote = readSecret(origin, handle, deps)
       assert.equal(afterPromote.found, true)
       assert.equal(afterPromote.value.merchant_key, replacementKey, 'live entry now holds the promoted replacement key')
@@ -106,26 +88,14 @@ test(
       assert.equal(readSecret(origin, stagingLabel, deps).found, false, 'promoteReplacementKey deletes the staging entry on success')
       cleanupNeeded = [handle] // staging already deleted by promotion
 
-      // --- delete + confirm with the real cmdkey tool --------------------
-      // deleteSecret is the module's own delete path (cmdkey /delete plus
-      // the matching temp-index removal) -- using it here, not a bare
-      // cmdkey call, is itself part of what this test verifies: that a
-      // normal deleteSecret call really does remove the real Credential
-      // Manager entry, not just the index bookkeeping.
+      // --- delete -------------------------------------------------------
       deleteSecret(origin, handle, deps)
       cleanupNeeded = []
       const afterDelete = readSecret(origin, handle, deps)
-      assert.equal(afterDelete.found, false, 'entry is gone from Credential Manager after deleteSecret')
-
-      const listing = execFileSync('cmdkey', ['/list'], { encoding: 'utf8' })
-      const matchesLeft = (listing.match(new RegExp(target.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'gu')) ?? []).length
-      const stagingMatchesLeft = (listing.match(new RegExp(stagingTarget.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&'), 'gu')) ?? []).length
-      console.log(`[vault-roundtrip] cmdkey /list confirms cleanup: live target occurrences=${matchesLeft}, staging target occurrences=${stagingMatchesLeft} (both expected 0)`)
-      assert.equal(matchesLeft, 0, 'cmdkey /list no longer lists the live target')
-      assert.equal(stagingMatchesLeft, 0, 'cmdkey /list no longer lists the staging target')
+      assert.equal(afterDelete.found, false, 'entry is gone from the isolated file vault after deleteSecret')
     } finally {
       // Best-effort cleanup even on assertion failure, so a failed run
-      // never leaves a fake credential (or its temp-index entry) behind.
+      // never leaves a fixture in the isolated file vault.
       for (const leftoverLabel of cleanupNeeded) {
         try {
           deleteSecret(origin, leftoverLabel, deps)

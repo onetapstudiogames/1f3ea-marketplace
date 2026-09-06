@@ -350,6 +350,22 @@ test('probeMe never follows a redirect from the origin to another host', async (
   }
 })
 
+test('Windows test runs default to the isolated file vault without invoking an OS credential command', { skip: process.platform !== 'win32' && 'Windows-only isolation proof' }, () => {
+  const homeDir = mkdtempSync(join(tmpdir(), 'identity-test-file-vault-'))
+  const deps = {
+    homeDir,
+    execFileSync: () => { throw new Error('the test reached the real Windows vault command path') },
+  }
+  try {
+    const location = storeSecret('https://localhost:1', 'isolated-test', { merchant_key: 'fixture' }, deps)
+    assert.match(location, /^local file/u)
+    assert.equal(readSecret('https://localhost:1', 'isolated-test', deps).value.merchant_key, 'fixture')
+    deleteSecret('https://localhost:1', 'isolated-test', deps)
+  } finally {
+    rmSync(homeDir, { recursive: true, force: true })
+  }
+})
+
 // --- Vault round trip against the temp-file backend -----------------------
 // The temp-file backend is the fallback used on any platform that is
 // neither win32 nor darwin (see storeSecret/readSecret in

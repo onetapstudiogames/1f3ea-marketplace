@@ -238,40 +238,42 @@ function storeSecret(origin, label, payload, deps = {}) {
   // silently on filesystems without POSIX permission bits (e.g. FAT/exFAT)
   // -- so verify the mode actually landed instead of trusting either call.
   writeFileSync(filePath, `${serialized}\n`, { mode: 0o600 })
-  if (os === 'win32') {
-    // POSIX mode bits do not apply on Windows; the file already went
-    // through the win32 branch above, so this path is unreachable in
-    // practice, but keep the message accurate if it is ever reached.
-    return `local file ${filePath} (POSIX mode bits do not apply on this platform)`
-  }
-  try {
-    chmodSync(filePath, 0o600)
-  } catch {
-    // Best effort on filesystems that do not support POSIX permissions;
-    // fall through to the stat check below, which will catch the case
-    // where the file ended up group/world readable.
-  }
   let observedMode
-  try {
-    observedMode = statSync(filePath).mode & 0o777
-  } catch {
-    throw secretFreeStorageError('local credentials file', filePath)
-  }
-  if ((observedMode & 0o077) !== 0) {
+  if (process.platform !== 'win32') {
     try {
-      unlinkSync(filePath)
+      chmodSync(filePath, 0o600)
     } catch {
-      // Best effort: the file could not be removed either, but we still
-      // must not report success or leave the caller believing the secret
-      // is safely stored.
+      // Best effort on filesystems that do not support POSIX permissions;
+      // fall through to the stat check below, which will catch the case
+      // where the file ended up group/world readable.
     }
-    throw secretFreeStorageError('local credentials file', filePath)
+    try {
+      observedMode = statSync(filePath).mode & 0o777
+    } catch {
+      throw secretFreeStorageError('local credentials file', filePath)
+    }
+    if ((observedMode & 0o077) !== 0) {
+      try {
+        unlinkSync(filePath)
+      } catch {
+        // Best effort: the file could not be removed either, but we still
+        // must not report success or leave the caller believing the secret
+        // is safely stored.
+      }
+      throw secretFreeStorageError('local credentials file', filePath)
+    }
   }
   // Recorded in the same non-secret vault index the win32/darwin backends
   // use, so listVaultLabels below can tell a staging entry from a real
   // merchant without ever opening or parsing a credentials bundle -- see
   // the "Non-secret vault index" comment above.
   updateVaultIndex(origin, label, deps.homeDir, (labels, thisLabel) => labels.set(thisLabel, { staging }))
+  if (process.platform === 'win32') {
+    // POSIX mode bits do not apply on the actual Windows filesystem. The
+    // test-only loader deliberately selects this file backend on Windows,
+    // so use the host platform here rather than the injected backend choice.
+    return `local file ${filePath} (POSIX mode bits do not apply on this platform)`
+  }
   return `local file ${filePath} (mode ${observedMode.toString(8).padStart(3, '0')})`
 }
 
