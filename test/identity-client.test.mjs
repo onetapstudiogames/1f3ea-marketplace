@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { writeFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync } from 'node:fs'
+import { chmodSync, writeFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -369,10 +369,10 @@ test('Windows test runs default to the isolated file vault without invoking an O
 })
 
 // --- Vault round trip against the temp-file backend -----------------------
-// The test loader selects the temp-file backend on every OS. These cases
-// specifically assert real POSIX permission-bit behavior: chmodSync narrows
-// an existing file and statSync reports literal mode 600. NTFS cannot make
-// that assertion hold, so only these POSIX-specific cases skip on win32.
+// The test loader selects the temp-file backend on every OS through its
+// node:os shim. On win32 only, a node:fs shim stands in for POSIX mode bits,
+// so the literal mode 600 assertion cannot mean anything and skips. On Linux
+// and macOS, the real chmodSync and statSync run and the assertion is genuine.
 // test/vault-roundtrip-windows.test.mjs covers file-backend write, read,
 // promote, and delete behavior on Windows.
 const posixFileBackend = process.platform !== 'win32'
@@ -390,9 +390,16 @@ test('vault round trip against the temp-file backend: store then read returns ex
       stored_at: new Date().toISOString(),
     }
     const deps = { platform: 'linux', homeDir }
+    const credentialsDir = join(homeDir, '.1f3ea', 'credentials')
+    const filePath = join(credentialsDir, 'https___example.invalid__roundtrip-tester.json')
+    mkdirSync(credentialsDir, { recursive: true, mode: 0o700 })
+    writeFileSync(filePath, '{}\n', { mode: 0o600 })
+    chmodSync(filePath, 0o666)
+    assert.notEqual(statSync(filePath).mode & 0o077, 0, 'the fixture starts group/world accessible')
 
     const location = storeSecret('https://example.invalid', 'roundtrip-tester', payload, deps)
     assert.match(location, /local file .*mode 600\)/u)
+    assert.equal(statSync(filePath).mode & 0o777, 0o600, 'storeSecret narrows an existing file to mode 600')
 
     const read = readSecret('https://example.invalid', 'roundtrip-tester', deps)
     assert.equal(read.found, true)
@@ -402,7 +409,7 @@ test('vault round trip against the temp-file backend: store then read returns ex
   }
 })
 
-test('vault round trip: reading a label that was never stored reports found:false, not an error', { skip: !posixFileBackend && 'temp-file backend depends on POSIX permission bits' }, async () => {
+test('vault round trip: reading a label that was never stored reports found:false, not an error', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-vault-'))
   try {
     const read = readSecret('https://example.invalid', 'never-stored', { platform: 'linux', homeDir })
@@ -412,7 +419,7 @@ test('vault round trip: reading a label that was never stored reports found:fals
   }
 })
 
-test('vault round trip: a corrupted stored entry throws SecretReadFailure, never a silent empty read', { skip: !posixFileBackend && 'temp-file backend depends on POSIX permission bits' }, async () => {
+test('vault round trip: a corrupted stored entry throws SecretReadFailure, never a silent empty read', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-vault-'))
   try {
     const deps = { platform: 'linux', homeDir }
@@ -432,7 +439,7 @@ test('vault round trip: a corrupted stored entry throws SecretReadFailure, never
   }
 })
 
-test('promoteReplacementKey merges forward client_class and recovery_codes from the live entry', { skip: !posixFileBackend && 'temp-file backend depends on POSIX permission bits' }, async () => {
+test('promoteReplacementKey merges forward client_class and recovery_codes from the live entry', async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-vault-'))
   try {
     const origin = 'https://example.invalid'
@@ -921,14 +928,8 @@ test('storeSecret/listVaultLabels: an abandoned (stale) vault-index lock is brok
 // file backend's bundle, and listVaultLabels prefers that marker over the
 // suffix guess -- covered here on every backend this script supports.
 
-const posixFileBackendForStagingTests = process.platform !== 'win32'
-
 for (const backendPlatform of ['win32', 'darwin', 'linux']) {
-  const skip = backendPlatform === 'linux' && !posixFileBackendForStagingTests
-    ? 'temp-file backend depends on POSIX permission bits; run on Linux/macOS or in this repo\'s CI'
-    : false
-
-  test(`listVaultLabels (${backendPlatform}): a real merchant whose handle ends in --pending-rotation is still listed`, { skip }, async () => {
+  test(`listVaultLabels (${backendPlatform}): a real merchant whose handle ends in --pending-rotation is still listed`, async () => {
     const origin = 'https://example.invalid'
     const homeDir = await mkdtemp(join(tmpdir(), `identity-client-staging-${backendPlatform}-`))
     const deps = { platform: backendPlatform, homeDir, execFileSync: () => '' }
@@ -962,7 +963,6 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
   test(
     `listVaultLabels (${backendPlatform}): a real merchant whose handle matches the registration-staging ` +
     'suffix shape is still listed, and never surfaced as registrationStagingLabels',
-    { skip },
     async () => {
       const origin = 'https://example.invalid'
       const homeDir = await mkdtemp(join(tmpdir(), `identity-client-staging-${backendPlatform}-`))
@@ -999,7 +999,7 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
     },
   )
 
-  test(`listVaultLabels (${backendPlatform}): a genuine staging entry is never listed`, { skip }, async () => {
+  test(`listVaultLabels (${backendPlatform}): a genuine staging entry is never listed`, async () => {
     const origin = 'https://example.invalid'
     const homeDir = await mkdtemp(join(tmpdir(), `identity-client-staging-${backendPlatform}-`))
     const deps = { platform: backendPlatform, homeDir, execFileSync: () => '' }
@@ -1043,7 +1043,6 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
     // this same PR -- see listVaultLabels' own 'darwin' branch and the
     // "enumerates the Keychain itself via dump-keychain" test above) unions
     // a real `security dump-keychain` scrape the same way.
-    { skip },
     async () => {
       const homeDir = await mkdtemp(join(tmpdir(), `identity-client-legacy-staging-${backendPlatform}-`))
       try {
@@ -1101,7 +1100,6 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
 
   test(
     `listVaultLabels (${backendPlatform}): a legacy bare-string index entry (staging unknown) still falls back to the suffix guess`,
-    { skip },
     async () => {
       const homeDir = await mkdtemp(join(tmpdir(), `identity-client-legacy-staging-${backendPlatform}-`))
       try {
@@ -1145,7 +1143,6 @@ for (const backendPlatform of ['win32', 'darwin', 'linux']) {
   // tests above still pass; only this one catches it.
   test(
     `storeSecret (${backendPlatform}): a rewrite for an unrelated label preserves an existing legacy bare-string entry and a real staging boolean, never inventing one`,
-    { skip },
     async () => {
       const homeDir = await mkdtemp(join(tmpdir(), `identity-client-index-preserve-${backendPlatform}-`))
       try {
