@@ -239,7 +239,7 @@ function storeSecret(origin, label, payload, deps = {}) {
   // -- so verify the mode actually landed instead of trusting either call.
   writeFileSync(filePath, `${serialized}\n`, { mode: 0o600 })
   let observedMode
-  if (process.platform !== 'win32') {
+  if (os !== 'win32') {
     try {
       chmodSync(filePath, 0o600)
     } catch {
@@ -268,10 +268,8 @@ function storeSecret(origin, label, payload, deps = {}) {
   // merchant without ever opening or parsing a credentials bundle -- see
   // the "Non-secret vault index" comment above.
   updateVaultIndex(origin, label, deps.homeDir, (labels, thisLabel) => labels.set(thisLabel, { staging }))
-  if (process.platform === 'win32') {
-    // POSIX mode bits do not apply on the actual Windows filesystem. The
-    // test-only loader deliberately selects this file backend on Windows,
-    // so use the host platform here rather than the injected backend choice.
+  if (os === 'win32') {
+    // POSIX mode bits do not apply on the Windows filesystem.
     return `local file ${filePath} (POSIX mode bits do not apply on this platform)`
   }
   return `local file ${filePath} (mode ${observedMode.toString(8).padStart(3, '0')})`

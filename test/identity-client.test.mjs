@@ -350,7 +350,9 @@ test('probeMe never follows a redirect from the origin to another host', async (
   }
 })
 
-test('Windows test runs default to the isolated file vault without invoking an OS credential command', { skip: process.platform !== 'win32' && 'Windows-only isolation proof' }, () => {
+test('Windows test runs default to the isolated file vault without invoking an OS credential command', { skip: process.platform !== 'win32' && 'Windows-only isolation proof' }, async () => {
+  const { matched } = await import('force-file-vault:match-state')
+  assert.equal(matched, true, 'the test loader matched vault-backends.mjs and installed its file-vault shims')
   const homeDir = mkdtempSync(join(tmpdir(), 'identity-test-file-vault-'))
   const deps = {
     homeDir,
@@ -367,20 +369,15 @@ test('Windows test runs default to the isolated file vault without invoking an O
 })
 
 // --- Vault round trip against the temp-file backend -----------------------
-// The temp-file backend is the fallback used on any platform that is
-// neither win32 nor darwin (see storeSecret/readSecret in
-// identity-client.mjs); it depends on real POSIX permission-bit semantics
-// (chmodSync narrowing an existing file, statSync reporting the narrowed
-// mode) that NTFS does not provide. On a real Linux runner (this repo's own
-// CI: ubuntu-latest) storeSecret narrows the file to mode 600 and this round
-// trip passes; on a Windows dev machine, forcing the file backend still
-// writes through real fs calls against NTFS, which cannot represent group/
-// other permission bits the way POSIX can, so the safety check that refuses
-// an over-open file is untestable here. This suite skips itself on win32
-// rather than assert something NTFS cannot honor either way.
+// The test loader selects the temp-file backend on every OS. These cases
+// specifically assert real POSIX permission-bit behavior: chmodSync narrows
+// an existing file and statSync reports literal mode 600. NTFS cannot make
+// that assertion hold, so only these POSIX-specific cases skip on win32.
+// test/vault-roundtrip-windows.test.mjs covers file-backend write, read,
+// promote, and delete behavior on Windows.
 const posixFileBackend = process.platform !== 'win32'
 
-test('vault round trip against the temp-file backend: store then read returns exactly what was written', { skip: !posixFileBackend && 'temp-file backend depends on POSIX permission bits; run on Linux/macOS or in this repo\'s CI' }, async () => {
+test('vault round trip against the temp-file backend: store then read returns exactly what was written', { skip: !posixFileBackend && 'literal POSIX mode 600 cannot be asserted on win32; Windows file-backend coverage is in test/vault-roundtrip-windows.test.mjs' }, async () => {
   const homeDir = await mkdtemp(join(tmpdir(), 'identity-client-vault-'))
   try {
     const payload = {
