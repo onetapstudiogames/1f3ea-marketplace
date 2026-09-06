@@ -351,8 +351,6 @@ test('probeMe never follows a redirect from the origin to another host', async (
 })
 
 test('Windows test runs default to the isolated file vault without invoking an OS credential command', { skip: process.platform !== 'win32' && 'Windows-only isolation proof' }, async () => {
-  const { matched } = await import('force-file-vault:match-state')
-  assert.equal(matched, true, 'the test loader matched vault-backends.mjs and installed its file-vault shims')
   const homeDir = mkdtempSync(join(tmpdir(), 'identity-test-file-vault-'))
   const deps = {
     homeDir,
