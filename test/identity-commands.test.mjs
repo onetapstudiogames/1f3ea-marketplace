@@ -6,7 +6,6 @@
 // and the honest two-pass human-approval gate.
 
 import assert from 'node:assert/strict'
-import { execFileSync } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -1269,33 +1268,8 @@ test('key/connect/setup refuse cleanly on a corrupt vault entry, never an uncaug
   const handle = `corrupt-handle-${Date.now().toString(36)}`
   const STACK_TRACE_LINE = /^\s*at\s+\S+/mu
 
-  if (process.platform === 'win32') {
-    // Seed a genuinely undecodable Windows Credential Manager entry the
-    // same way the finding's own reproduction did: cmdkey can write an
-    // arbitrary password string that CredRead reads back as raw bytes this
-    // script's JSON.parse(Buffer.from(...)) cannot decode.
-    const target = `1f3ea:${origin}:${handle}`
-    execFileSync('cmdkey', [`/generic:${target}`, `/user:${handle}`, '/pass:not-valid-base64-json{{{'], { stdio: 'ignore' })
-    try {
-      for (const [label, scriptPath, args] of [
-        ['key status', keyPath, ['status', '--origin', origin, '--allow-origin', origin, '--handle', handle]],
-        ['key show', keyPath, ['show', '--origin', origin, '--allow-origin', origin, '--handle', handle]],
-        ['connect', connectPath, ['--origin', origin, '--allow-origin', origin, '--handle', handle]],
-        ['setup', setupPath, ['--origin', origin, '--allow-origin', origin, '--handle', handle, '--client-class', 'coding_persistent']],
-      ]) {
-        const result = await runNode(scriptPath, args, { env: NOT_A_REAL_ORIGIN_ENV })
-        assert.notEqual(result.status, 0, `${label}: exits non-zero on a corrupt vault entry`)
-        assert.doesNotMatch(result.stderr, STACK_TRACE_LINE, `${label}: no raw stack trace`)
-        assert.match(result.stderr, /could not be decoded/iu, `${label}: caller-words explanation`)
-      }
-    } finally {
-      execFileSync('cmdkey', [`/delete:${target}`], { stdio: 'ignore' })
-    }
-    return
-  }
-
-  // POSIX file backend: write a corrupt file directly at the deterministic
-  // path storeSecret/readSecret compute, inside a throwaway HOME.
+  // Test-only file backend: write a corrupt file directly at the deterministic
+  // path storeSecret/readSecret compute, inside a throwaway HOME on every OS.
   const home = makeTempHome('corrupt-vault-')
   try {
     const safeOrigin = origin.replace(/[^a-z0-9.-]/giu, '_')
