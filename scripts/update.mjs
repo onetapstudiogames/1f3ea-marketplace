@@ -38,18 +38,21 @@ if (!installedVersion) {
 
   if (!remoteManifest.ok) {
     console.log(`Could not reach the repository (${remoteManifest.error}). Installed version stays ${installedVersion}.`);
+    process.exitCode = 1;
   } else {
     let remoteVersion = null;
     try {
       remoteVersion = JSON.parse(remoteManifest.data).version;
     } catch {
       console.log("The repository's plugin.json was not valid JSON; cannot compare versions right now.");
+      process.exitCode = 1;
     }
 
     if (remoteVersion) {
       const comparison = compareVersions(installedVersion, remoteVersion);
       if (comparison === null) {
         console.log(`Could not compare versions "${installedVersion}" and "${remoteVersion}".`);
+        process.exitCode = 1;
       } else if (comparison >= 0) {
         console.log(`You're already on the latest version (${installedVersion}).`);
       } else {
@@ -69,6 +72,9 @@ if (!installedVersion) {
             }
             console.log("");
           }
+        } else {
+          console.log(`Could not read the repository changelog (${remoteChangelog.error}).`);
+          process.exitCode = 1;
         }
 
         if (!confirmed) {

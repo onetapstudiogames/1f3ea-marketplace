@@ -69,7 +69,10 @@ let origin
 try {
   origin = assertAllowedOrigin(rawOrigin, { allowOrigin })
 } catch (error) {
-  console.error(`key: ${error.message}`)
+  console.error(
+    `key: could not start; no key was read, stored, or changed (${error.message}). ` +
+    'Fix the origin, then run `key status` again. Read: https://1f3ea.com/',
+  )
   process.exitCode = 1
   process.exit()
 }
@@ -107,8 +110,9 @@ function requireStoredKey(handle) {
   } catch (error) {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
-      `key: ${error.message}; this is not "no key stored" -- refusing to guess. If you have a saved ` +
-      'recovery code for this handle, use `key recover begin` to replace it; do not register a new identity.',
+      `key: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
+      'that unreadable vault entry first. Then, if you have a saved recovery code, run `key recover begin`; ' +
+      'do not register a new identity.',
     )
     process.exitCode = 1
     return null
@@ -148,8 +152,15 @@ function requireStoredClientClass(handle) {
   let stored
   try {
     stored = readSecret(origin, handle)
-  } catch {
-    stored = { found: false }
+  } catch (error) {
+    if (!(error instanceof SecretReadFailure)) throw error
+    console.error(
+      `key: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
+      'that unreadable vault entry first. Then, if you have a saved recovery code, run `key recover begin`; ' +
+      'do not register a new identity.',
+    )
+    process.exitCode = 1
+    return null
   }
   const clientClass = stored.found ? stored.value?.client_class : undefined
   if (typeof clientClass === 'string') return clientClass
@@ -343,8 +354,14 @@ function resolveClientClassForRecoveryBegin() {
     let stored
     try {
       stored = readSecret(origin, handle)
-    } catch {
-      stored = { found: false }
+    } catch (error) {
+      if (!(error instanceof SecretReadFailure)) throw error
+      console.error(
+        `key recover begin: ${error.message}; this is not "no key stored" -- refusing to guess. ` +
+        'Repair or remove the unreadable vault entry first, then run this exact recovery command again.',
+      )
+      process.exitCode = 1
+      return null
     }
     if (stored.found && typeof stored.value?.client_class === 'string') return stored.value.client_class
   }
@@ -382,8 +399,14 @@ async function validateBeforeRecoverBegin() {
   let stored
   try {
     stored = readSecret(origin, handle)
-  } catch {
-    return true
+  } catch (error) {
+    if (!(error instanceof SecretReadFailure)) throw error
+    console.error(
+      `key recover begin: ${error.message}; this is not "no key stored" -- refusing to guess. ` +
+      'Repair or remove the unreadable vault entry first, then run this exact recovery command again.',
+    )
+    process.exitCode = 1
+    return false
   }
   if (!stored.found || typeof stored.value?.merchant_key !== 'string') return true
   return refuseOnHandleMismatch(handle, stored.value.merchant_key, 'key recover begin')
@@ -696,7 +719,11 @@ async function adopt() {
       concurrentCallersPhrase: 'another registration, rotation, recovery, or adopt',
     })
   } catch (error) {
-    console.error(`key adopt: ${error.message}`)
+    console.error(
+      `key adopt: did not finish (${error.message}). Do not assume either vault entry moved. ` +
+      `Run \`key status --handle ${handle}\`, then retry this exact adopt command. ` +
+      'Read: https://1f3ea.com/',
+    )
     process.exitCode = 1
     return
   }
@@ -719,8 +746,9 @@ function show() {
   } catch (error) {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
-      `key: ${error.message}; this is not "no key stored" -- refusing to guess. If you have a saved ` +
-      'recovery code for this handle, use `key recover begin` to replace it; do not register a new identity.',
+      `key: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
+      'that unreadable vault entry first. Then, if you have a saved recovery code, run `key recover begin`; ' +
+      'do not register a new identity.',
     )
     process.exitCode = 1
     return
@@ -784,5 +812,6 @@ else if (command === 'recover') {
 else if (command === 'adopt') await adopt()
 else {
   console.error('usage: key.mjs <status|rotate|recover generate|recover begin|show|adopt> [--flags]')
+  console.error('Next: run `key status` to check the current key, or run `help` to see every command.')
   process.exitCode = 1
 }

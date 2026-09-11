@@ -319,7 +319,10 @@ if (isDirectRun) {
         : "Live truth check passed for llms.txt, /api/official, and the /api/me rejection message.",
     );
   } catch (error) {
-    console.error(`Live truth check failed: ${error.message}`);
+    console.error(
+      `Live truth check failed: ${error.message}. This read-only check changed no market data. ` +
+      "Run `npm run check:live-truth` again after fixing the reported read. Read: https://1f3ea.com/",
+    );
     process.exitCode = 1;
   }
 }

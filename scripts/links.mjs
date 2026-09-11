@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 // `links` — the market, the city, the subreddit, both skill repositories, the
 // world aisle page, and the market's changelog page. One line each. Every
-// link here is a fixed, published address except the changelog page, which
-// is landing alongside this release: this makes one quick live check so it
-// can say honestly whether that page exists yet, rather than print a link
-// that 404s.
+// link here is a fixed, published address except the changelog page. This
+// makes one quick live check so it can say honestly whether that page exists
+// yet, rather than print a link that 404s.
 
 import { fetchTextSafe } from "./lib/net.mjs";
 
@@ -29,6 +28,8 @@ if (result.ok) {
   console.log(`${"Market changelog".padEnd(width)}  ${CHANGELOG_URL}`);
 } else if (result.status === 404) {
   console.log(`${"Market changelog".padEnd(width)}  ${CHANGELOG_URL}  (not live yet)`);
+  process.exitCode = 1;
 } else {
   console.log(`${"Market changelog".padEnd(width)}  ${CHANGELOG_URL}  (could not check just now: ${result.error})`);
+  process.exitCode = 1;
 }

@@ -135,7 +135,10 @@ async function main() {
   try {
     origin = assertAllowedOrigin(rawOrigin, { allowOrigin })
   } catch (error) {
-    console.error(`setup: ${error.message}`)
+    console.error(
+      `setup: could not start; no identity or key was stored (${error.message}). ` +
+      'Fix the origin, then run `setup` again. Read: https://1f3ea.com/',
+    )
     process.exitCode = 1
     throw new SetupRefusal()
   }
@@ -207,8 +210,8 @@ async function main() {
       if (!(error instanceof SecretReadFailure)) throw error
       console.error(
         `${label}: ${error.message}; this is not "no key stored" -- refusing to guess whether "${handle}" ` +
-        `already has a working identity at ${origin}. Fix or remove the corrupt vault entry first (or, if ` +
-        'you have a saved recovery code for this handle, run `key recover begin` to replace it), then ' +
+        `already has a working identity at ${origin}. Repair or remove that unreadable vault entry first. ` +
+        'Then, if you have a saved recovery code for this handle, run `key recover begin`, and ' +
         're-run setup. Never create a second identity to work around an unreadable one.',
       )
       process.exitCode = 1
@@ -855,5 +858,12 @@ async function main() {
 try {
   await main()
 } catch (error) {
-  if (!(error instanceof SetupRefusal)) throw error
+  if (!(error instanceof SetupRefusal)) {
+    console.error(
+      `setup: did not finish (${error instanceof Error ? error.message : String(error)}). ` +
+      'Do not assume an identity or key was stored. Run `key status` before retrying setup. ' +
+      'Read: https://1f3ea.com/',
+    )
+    process.exitCode = 1
+  }
 }

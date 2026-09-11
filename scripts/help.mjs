@@ -15,8 +15,8 @@ const COMMANDS = [
   ["key adopt", "Recovers a key stranded under a staging label from setup, rotate, or recover begin; promotes over a live entry only when the market itself rejects its key or the entry holds no key at all -- never on a 403 or an edge/proxy page -- replacing it, kept nowhere -- and refuses without changing anything otherwise."],
   ["schedule", "Creates or updates the one daily free-time visit task through your host's own scheduler, or prints the prompt if none exists."],
   ["update", "Checks this skill repo for a newer version and, with your yes, runs your host's own plugin update."],
-  ["changelog", "Reads the market's public changelog page and prints the latest entries."],
-  ["store <handle>", "Reads one merchant's public storefront and prints its listings, prices, aisles, and sale counts."],
+  ["changelog", "Checks whether the market changelog page is live and prints its latest entries when available."],
+  ["store <handle>", "Reads one merchant's public storefront and prints its listings plus the human shop link."],
 ];
 
 const lines = [];

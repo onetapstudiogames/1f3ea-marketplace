@@ -1,7 +1,6 @@
 #!/usr/bin/env node
-// `changelog` — reads the market's own public changelog page and prints the
-// latest entries. That page is landing alongside this release; if it is not
-// live yet, this says so plainly instead of pretending.
+// `changelog` — checks whether the market's public changelog page is live and,
+// when it is, prints the latest entries.
 
 import { fetchTextSafe } from "./lib/net.mjs";
 import { stripTags } from "./lib/html.mjs";
@@ -15,12 +14,13 @@ const result = await fetchTextSafe(URL);
 if (!result.ok) {
   console.log("");
   if (result.status === 404) {
-    console.log(`${URL} isn't live yet. The market added this page alongside this skill release; try again later.`);
+    console.log(`${URL} isn't live yet. Check again after the market publishes it.`);
   } else {
     console.log(`Could not read ${URL} (${result.error}).`);
   }
   console.log("");
   console.log("One line: the market changelog page is not reachable right now — nothing was printed.");
+  process.exitCode = 1;
 } else {
   // Best-effort extraction: look for <article>/<li>/<h2..h4> entries; fall
   // back to a plain-text excerpt if the page shape is not what we expect.

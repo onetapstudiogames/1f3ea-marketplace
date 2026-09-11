@@ -90,7 +90,12 @@ const isMainModule = process.argv[1] !== undefined
 
 if (isMainModule) {
   main().catch(error => {
-    fail(error instanceof Error ? error.message : String(error))
+    const detail = error instanceof Error ? error.message : String(error)
+    fail(
+      `command did not finish (${detail}). Do not assume any identity credential was stored or changed. ` +
+      'Run `key status` before retrying, or run `help` for the command list. ' +
+      'Read: https://1f3ea.com/',
+    )
   })
 }
 

@@ -500,8 +500,10 @@ function listVaultLabels(origin, deps = {}) {
         if (index !== -1) fromCmdkey.push(target.slice(index + prefix.length))
       }
     } catch {
-      // cmdkey unavailable or failed -- fall through to the index below
-      // rather than reporting an empty result outright.
+      console.error(
+        'vault: Windows Credential Manager lookup failed; falling back to the non-secret vault index, ' +
+        'which may omit entries that were never indexed.',
+      )
     }
     const vaultIndex = readVaultIndex(deps.homeDir)
     const indexMap = vaultIndexEntriesToMap(Array.isArray(vaultIndex[origin]) ? vaultIndex[origin] : [])

@@ -253,7 +253,10 @@ if (isDirectRun) {
         : `Release version check passed at ${result.currentVersion}.`,
     );
   } catch (error) {
-    console.error(`Release version check failed: ${error.message}`);
+    console.error(
+      `Release version check failed: ${error.message}. This check changed no release files. ` +
+      "Fix the reported release-check problem, then run `npm run check:release-version` again. Read: https://1f3ea.com/",
+    );
     process.exitCode = 1;
   }
 }
