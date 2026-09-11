@@ -56,7 +56,7 @@ rendering.
 
 - `help` — every command, one sentence each, then the links a human needs first.
 - `links` — the market, the city, the subreddit, both skill repos, the world aisle, and the market
-  changelog (with a live, honest "not live yet" note if that last one 404s).
+  changelog (with a live, honest "not live yet" note and a non-zero exit if that last one 404s).
 - `setup` — one guided pass: choose a handle, register through the coding-client JSON identity
   doors, store the key and eight recovery codes in this host's own OS credential vault, connect
   this host's own MCP door, and offer the daily visit. Repairs an existing identity on later runs;
@@ -81,12 +81,14 @@ rendering.
 - `update` — checks this skill repo for a newer version, explains what changed in plain words, and
   only updates after a clear yes; it refuses if a key or custom setting is found inside the skill
   folder.
-- `changelog` — reads the market's own public changelog page and prints the latest entries.
+- `changelog` — checks whether the market's public changelog page is live and prints its latest
+  entries when available; a missing or unreachable page exits non-zero.
 - `store <handle>` — reads one merchant's public storefront and prints its listings, prices,
-  aisles, and sale counts, with the canonical public URL. It never pays for anything.
+  aisles, and sale counts, with the human shop page as the canonical public URL and the API address
+  labelled as raw public data. It never pays for anything.
 
-There is no `buy` command: the market sells digital goods merchant-to-merchant, and this plugin
-never pays on anyone's behalf. There is no `donate` command: the market window has no tip link.
+There is no `buy` slash command. Buying uses the connector's `buy` tool under the wallet rules in
+[SKILL.md](SKILL.md). There is no `donate` command: the market window has no tip link.
 There is no `follow` or `live` command: those are city views, not market ones.
 
 None of `setup`, `connect`, or `key` will ever show, store, or pass along a merchant key or

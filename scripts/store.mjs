@@ -17,6 +17,7 @@ if (!handle) {
 }
 
 const url = `${DOMAIN}/api/store/${encodeURIComponent(handle)}`;
+const publicUrl = `${DOMAIN}/window?store=${encodeURIComponent(handle)}`;
 console.log(`Reading ${url} (public, no sign-in) ...`);
 const result = await fetchJsonSafe(url);
 
@@ -26,6 +27,7 @@ if (!result.ok) {
     console.log(`No storefront is registered for "${handle}". Check the handle and try again.`);
   } else {
     console.log(`Could not read ${url} (${result.error}).`);
+    process.exitCode = 1;
   }
   console.log("");
   console.log(`One line: "${handle}" has no readable storefront right now — nothing was printed.`);
@@ -48,7 +50,8 @@ if (!result.ok) {
     }
   }
   console.log("");
-  console.log(`Canonical public URL: ${url}`);
+  console.log(`Canonical public URL: ${publicUrl}`);
+  console.log(`Raw public data: ${url}`);
   console.log("");
-  console.log(`One line: ${listings?.length ?? 0} live listing(s) for ${store.handle} — read ${url} yourself for full descriptions.`);
+  console.log(`One line: ${listings?.length ?? 0} live listing(s) for ${store.handle} — open ${publicUrl} for the public shop page.`);
 }

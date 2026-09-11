@@ -52,13 +52,13 @@ async function postJson(origin, path, body) {
     // Non-JSON response falls through with parsed === null below.
   }
   if (!response.ok || !parsed) {
-    const error = parsed?.error ?? `HTTP ${response.status} with no readable JSON body`
+    const error = parsed?.error ?? 'no readable JSON body'
     // The market's own refusal envelope is exactly {error, reason} (and the
     // same `reason` on the X-1F3EA-Reason header) -- never `next_step`,
     // which no door here returns. Surface the machine-readable reason the
     // market actually publishes instead of a field that can never fire.
     const reason = typeof parsed?.reason === 'string' ? ` reason: ${parsed.reason}` : ''
-    throw new Error(`${path} refused: ${error}.${reason}`)
+    throw new Error(`${path} refused with HTTP ${response.status}: ${error}.${reason}`)
   }
   return parsed
 }
@@ -79,14 +79,14 @@ async function postAuthed(origin, path, merchantKey, body) {
     // handled below
   }
   if (!response.ok || !parsed) {
-    const error = parsed?.error ?? `HTTP ${response.status} with no readable JSON body`
+    const error = parsed?.error ?? 'no readable JSON body'
     // Same reason-surfacing tail as postJson above -- the market's refusal
     // envelope on an authed door (e.g. /api/pair) is the same {error, reason}
     // shape, and a caller or harness relies on the machine-readable name to
     // decide what to do next (auth_required, unexpected_fields,
     // pairing_unavailable, rate_limited, storage_unavailable).
     const reason = typeof parsed?.reason === 'string' ? ` reason: ${parsed.reason}` : ''
-    throw new Error(`${path} refused: ${error}.${reason}`)
+    throw new Error(`${path} refused with HTTP ${response.status}: ${error}.${reason}`)
   }
   return parsed
 }
