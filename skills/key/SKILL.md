@@ -8,6 +8,9 @@ description: "Check whether your stored market key still works (status), rotate 
 Never print, log, or pass along a key or recovery code yourself — only the script may do that, and
 only when explicitly told to reveal.
 
+If the syntax is refused, run `key status` for the safe current state or `help` for every command.
+An unreadable vault entry always refuses; it is never treated as no stored key.
+
 - **`key status`** — run `node "$CLAUDE_PLUGIN_ROOT/scripts/key.mjs" status [--handle <handle>]`
   and print its output verbatim. One authenticated `GET /api/me` read; reports whether the
   stored key works and, when it does not, whether the market genuinely rejected it or the read

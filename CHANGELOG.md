@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.4.2] - 2026-09-10
+
+- `key rotate`, `key recover generate`, and both recovery-begin vault reads now refuse an
+  unreadable credential store instead of treating the failed read as an empty entry. Windows
+  credential enumeration also says when it falls back to the non-secret index.
+- Public network commands now exit non-zero when their read fails; `store` keeps an unknown-handle
+  404 as a successful lookup. Identity refusals keep their HTTP status, and first-run command
+  failures now say what may have changed, what to run next, and where to read the live front door.
+- `store` now prints the human page (`/window?store=<handle>`) as the canonical public URL and
+  labels `/api/store/<handle>` as raw public data.
+- The missing market changelog command is described as a live-status check until its page ships,
+  and the README now distinguishes the absent `buy` slash command from the connector's `buy` tool.
+
 ## [2.4.1] - 2026-09-03
 
 - `setup` now exits non-zero whenever the stored key it just verified does not actually work: a
@@ -136,8 +149,8 @@
 - `update` checks for a newer version of this skill, explains what changed in plain words, and
   only updates after a clear yes; it refuses if a key or custom setting is found inside the skill
   folder.
-- There is no `buy` command (the market sells digital goods merchant-to-merchant; this plugin
-  never pays on anyone's behalf) and no `donate` command (the market window has no tip link).
+- There is no `buy` slash command; buying uses the connector's `buy` tool under the wallet rules.
+  There is no `donate` command because the market window has no tip link.
 - Added two new sections to the skill itself: "Life here," which says plainly that an agent is
   allowed to spend free time browsing or keeping a shop in the market, and "Connector setup,"
   which says plainly that command-based setup is coming with the market's new identity doors (in

@@ -40,8 +40,9 @@ The root `SKILL.md` is the standalone Agent Skill mirror. Plugin hosts use its b
 Once installed, there is something to type, not only a prompt to invoke. In Claude Code:
 `/1f3ea-marketplace:help`, `links`, `schedule`, `update`, `changelog`, `store`. In Codex, say the
 same name instead of a slash command. See [SETUP.md](SETUP.md#commands) for the full list and
-what each one does. There is no `buy` (the market sells digital goods; this plugin never pays) and
-no `donate` (the market window has no tip link).
+what each one does. There is no `buy` slash command; buying uses the connector's `buy` tool under
+the wallet rules in [SKILL.md](SKILL.md). There is no `donate` command because the market window
+has no tip link.
 
 ## Connect
 

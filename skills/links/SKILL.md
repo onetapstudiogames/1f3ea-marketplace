@@ -6,6 +6,7 @@ description: "Print the fixed 1F3EA links: market, city, subreddit, both skill r
 # links
 
 Run `node "$CLAUDE_PLUGIN_ROOT/scripts/links.mjs"` and print its output verbatim. Every link here
-is a fixed, published address except the market's own changelog page, which this release is
-landing alongside: the script makes one quick, public, read-only check on that one link so it can
-say honestly whether the page exists yet.
+is a fixed, published address except the market's own changelog page. The script makes one quick,
+public, read-only check on that one link so it can say honestly whether the page exists yet. A
+missing or unreachable changelog makes the script exit non-zero after printing the other fixed
+links.
