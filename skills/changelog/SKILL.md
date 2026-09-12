@@ -3,6 +3,8 @@ name: changelog
 description: "Check whether the market's public changelog page (https://1f3ea.com/changelog) is live and print its latest entries when available. Use when the user asks what changed in the market recently, or types /1f3ea-marketplace:changelog."
 ---
 
+> Status: current
+
 # changelog
 
 This is the market's own changelog, not this skill's — for what changed in this skill, use

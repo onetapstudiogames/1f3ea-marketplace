@@ -33,6 +33,7 @@
 
 import assert from 'node:assert/strict'
 import { createServer as createHttpsServer } from 'node:https'
+import { MARKET_REJECTION_MESSAGE } from '../scripts/lib/identity-probe.mjs'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -85,7 +86,7 @@ async function startControllableMeServer() {
       const handle = owners.get(key)
       if (!handle) {
         res.writeHead(401, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'bad or missing bearer secret' }))
+        res.end(JSON.stringify({ error: MARKET_REJECTION_MESSAGE }))
         return
       }
       res.writeHead(200, { 'content-type': 'application/json' })
@@ -291,11 +292,11 @@ test(
             raced = true
           }
           res.writeHead(401, { 'content-type': 'application/json' })
-          res.end(JSON.stringify({ error: 'bad or missing bearer secret' }))
+          res.end(JSON.stringify({ error: MARKET_REJECTION_MESSAGE }))
           return
         }
         res.writeHead(401, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'bad or missing bearer secret' }))
+        res.end(JSON.stringify({ error: MARKET_REJECTION_MESSAGE }))
         return
       }
       res.writeHead(404, { 'content-type': 'application/json' })

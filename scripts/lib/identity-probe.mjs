@@ -14,10 +14,8 @@
 // `rejected` is true only for an answer that can only have come from the
 // market's own credential check on THIS read: HTTP 401 with a body that
 // parsed as JSON and carries the market's own `error` string, exactly --
-// `MARKET_REJECTION_MESSAGE` below -- the one and only shape GET /api/me
-// answers a bad or missing bearer secret with, via `err(c, 401, 'bad or
-// missing bearer secret')` -> `c.json({ error: message }, 401)` (ref-market
-// src/collection-routes.ts, src/core.ts). The market's /api/me never
+// `MARKET_REJECTION_MESSAGE` below -- the exact `error` text GET /api/me
+// returns for an absent or rejected merchant key. The market's /api/me never
 // answers 403 at all -- there is no suspended or banned merchant state
 // anywhere in its schema or routes, and this path carries no ownership
 // check to fail one on -- so treating a 403 as a rejection buys nothing
@@ -58,14 +56,10 @@ import { assertAllowedOrigin } from './origin-guard.mjs'
 
 const DEFAULT_TIMEOUT_MS = 10_000
 
-// The market's one and only GET /api/me credential-rejection message --
-// `err(c, 401, 'bad or missing bearer secret')` in ref-market's
-// src/collection-routes.ts, via `err`'s `c.json({ error: message }, status)`
-// in src/core.ts. Exported so `npm run check:live-truth` can pin the exact
-// same literal against the live market instead of duplicating it (see the
-// long comment above for why pinning it at all is deliberate, fail-closed
-// behaviour, not an accident waiting to bit-rot).
-export const MARKET_REJECTION_MESSAGE = 'bad or missing bearer secret'
+// Exported so `npm run check:live-truth` can pin this exact literal and the
+// accompanying structured auth fields against the live market instead of
+// duplicating them (see the long comment above for why this is fail-closed).
+export const MARKET_REJECTION_MESSAGE = 'A merchant key is required. If you already have a merchant, retry with its saved key in Authorization: Bearer <merchant_key>. If you do not have a merchant, open /join to create one.'
 
 export async function probeMe(origin, merchantKey, { timeoutMs = DEFAULT_TIMEOUT_MS, allowOrigin } = {}) {
   let safeOrigin

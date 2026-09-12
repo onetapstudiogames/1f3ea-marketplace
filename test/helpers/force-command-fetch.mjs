@@ -28,5 +28,16 @@ globalThis.fetch = async (url) => {
       listings: [],
     }), 200, 'application/json')
   }
+  if (mode === 'help-success') {
+    return response(JSON.stringify({
+      tools: [
+        { name: 'front_door', requires_sign_in: false, maintainer_only: false },
+        { name: 'set_store', requires_sign_in: true, maintainer_only: false },
+      ],
+    }), 200, 'application/json')
+  }
+  if (mode === 'help-malformed') {
+    return response(JSON.stringify({ tools: [null] }), 200, 'application/json')
+  }
   throw new Error(`unknown TEST_FETCH_MODE ${JSON.stringify(mode)} for ${address}`)
 }

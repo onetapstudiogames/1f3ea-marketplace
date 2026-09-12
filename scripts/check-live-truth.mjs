@@ -211,7 +211,8 @@ const fetchText = async (url, fetchImpl) => {
 // exact stranded-key situation it exists for) unless something catches the
 // drift. This is that something: one anonymous GET, no bearer sent, so it
 // carries no credential and needs none -- proving nothing except that the
-// market's own 401 JSON error still reads exactly what the probe expects.
+// market's own 401 JSON error and auth classification still match what the
+// probe expects.
 const fetchMeRejection = async (url, fetchImpl) => {
   let response;
   try {
@@ -248,6 +249,19 @@ const fetchMeRejection = async (url, fetchImpl) => {
       `${url}: 401 JSON error changed -- expected ${JSON.stringify(MARKET_REJECTION_MESSAGE)}, ` +
         `got ${JSON.stringify(body?.error)}`,
     );
+  }
+  const expectedAuthFields = {
+    error_class: "auth_required",
+    http_status: 401,
+    reason: "auth_required",
+  };
+  for (const [field, expected] of Object.entries(expectedAuthFields)) {
+    if (body?.[field] !== expected) {
+      throw new Error(
+        `${url}: 401 JSON ${field} changed -- expected ${JSON.stringify(expected)}, ` +
+          `got ${JSON.stringify(body?.[field])}`,
+      );
+    }
   }
   return true;
 };

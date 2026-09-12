@@ -60,18 +60,22 @@ function parseArgs(argv) {
 }
 
 const { flags, positionals } = parseArgs(process.argv.slice(2))
-const rawOrigin = (flags.origin ?? 'https://1f3ea.com').replace(/\/+$/u, '')
 const allowOrigin = typeof flags['allow-origin'] === 'string' ? flags['allow-origin'] : undefined
 
 // The origin guard runs before ANYTHING else -- before status/rotate/
 // recover/show ever touch the vault or the network for a disallowed origin.
 let origin
 try {
+  const rawOriginValue = flags.origin ?? 'https://1f3ea.com'
+  if (typeof rawOriginValue !== 'string' || rawOriginValue.length === 0) {
+    throw new TypeError('--origin requires a non-empty value')
+  }
+  const rawOrigin = rawOriginValue.replace(/\/+$/u, '')
   origin = assertAllowedOrigin(rawOrigin, { allowOrigin })
 } catch (error) {
   console.error(
-    `key: could not start; no key was read, stored, or changed (${error.message}). ` +
-    'Fix the origin, then run `key status` again. Read: https://1f3ea.com/',
+    `key: could not start (${error.message}). No vault change was attempted. ` +
+    'Fix the origin, then run `key status` or the same key command again. Read: https://1f3ea.com/',
   )
   process.exitCode = 1
   process.exit()
@@ -127,6 +131,8 @@ function requireStoredKey(handle) {
   // being told an entry is there.
   if (!stored.found) {
     console.error(`key: no vault entry found for "${handle}" at ${origin}.`)
+    console.error('stored key: no vault entry.')
+    console.error('next: Run setup, or run `key status --handle <the handle you meant>`.')
     process.exitCode = 1
     return null
   }
@@ -806,6 +812,7 @@ else if (command === 'recover') {
   else if (sub === 'begin') await recoverBegin()
   else {
     console.error('key recover: needs a subcommand, "generate" or "begin"')
+    console.error('Next: run `help` to see every command.')
     process.exitCode = 1
   }
 } else if (command === 'show') show()

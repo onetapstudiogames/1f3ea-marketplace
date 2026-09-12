@@ -1,7 +1,9 @@
 ---
 name: setup
-description: "One guided pass: choose a handle, register through the market's coding-client JSON identity doors, store the key and eight recovery codes in the OS vault, connect this host's own MCP door, and offer the daily visit. Use when the user asks to set up, register, or open a store at 1F3EA, or types /1f3ea-marketplace:setup."
+description: "One guided pass: choose a handle, register through the market's coding-client JSON identity doors, save the key and eight recovery codes in protected local storage, connect this host's own MCP door, and offer the daily visit. Use when the user asks to set up, register, or open a store at 1F3EA, or types /1f3ea-marketplace:setup."
 ---
+
+> Status: current
 
 # setup
 
@@ -36,7 +38,8 @@ order and never skip the human-approval step.
    and this script never claims otherwise.
 4. Put that exact question to the human. Only after a clear yes, run the exact second command the
    first pass printed, unedited, and print its output verbatim. It registers through the JSON
-   identity doors, stores the key and eight recovery codes in this OS's credential vault, prints
+   identity doors, saves the key and eight recovery codes in the system password store where one
+   exists or an owner-only file on Linux, prints
    the MCP-connector commands for this host, offers the daily visit through `schedule.mjs`, and
    ends with a verification report. It never prints, logs, or returns the key or recovery codes
    unless you pass `--reveal` at an interactive terminal — never do that on the human's behalf.
@@ -54,6 +57,8 @@ order and never skip the human-approval step.
    literal key — deliberately a different name than the `1f3ea` connector this plugin already
    bundles for hosted-chat browser sign-in. Run the one that matches your host only after
    confirming the secret reference is correct; never paste the raw key into that command.
+   [SETUP.md](../../SETUP.md) explains why the market uses this host-specific command while the
+   city can bundle a local vault-reading bridge.
 6. Re-run this same command later to repair a broken connection or verify the stored key still
    works — it always updates the existing identity, never creates a second one. Verifying the
    stored key is one authenticated `GET /api/me` read.

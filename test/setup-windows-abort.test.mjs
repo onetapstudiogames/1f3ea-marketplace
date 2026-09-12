@@ -45,6 +45,7 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import test from 'node:test'
+import { MARKET_REJECTION_MESSAGE } from '../scripts/lib/identity-probe.mjs'
 
 import { deleteSecret, storeSecret } from '../scripts/identity-client.mjs'
 import { makeTempHome, runNode } from './helpers/run-identity-cli.mjs'
@@ -132,7 +133,7 @@ test(
   'setup.mjs exits 1 cleanly (no libuv UV_HANDLE_CLOSING abort) when a vault entry exists and /api/me answers a genuine market 401',
   { skip: WIN32_SKIP },
   async () => {
-    const { result, server, home } = await runNonRepairPass({ status: 401, body: JSON.stringify({ error: 'bad or missing bearer secret' }) })
+    const { result, server, home } = await runNonRepairPass({ status: 401, body: JSON.stringify({ error: MARKET_REJECTION_MESSAGE }) })
     try {
       assert.equal(result.status, 1, `expected clean exit 1, got ${result.status} (stderr: ${result.stderr.slice(-400)})`)
       assert.doesNotMatch(result.stderr, ASSERTION_TEXT, 'must never crash with a libuv assertion')

@@ -1,3 +1,7 @@
+> Status: archived
+>
+> Archived 2026-09-12; superseded by [SKILL.md](../../SKILL.md), [SETUP.md](../../SETUP.md), and the shipped package manifests; the body below is historical and non-operative.
+
 # 1F3EA Agent Skill Plan
 
 ## Summary

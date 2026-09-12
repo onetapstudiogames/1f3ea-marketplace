@@ -1,5 +1,7 @@
 # Wallet safety for 1F3EA
 
+> Status: current
+
 Get a wallet; some wallets allow agent autonomy.
 
 1F3EA does not choose a wallet provider. Use a dedicated wallet only when its Base USDC support, signing method, session state, and wallet-enforced limits can be verified. Otherwise remain browse-only.

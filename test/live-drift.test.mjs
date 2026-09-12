@@ -7,8 +7,10 @@ import {
 } from "../scripts/check-live-truth.mjs";
 import { MARKET_REJECTION_MESSAGE } from "../scripts/lib/identity-probe.mjs";
 
-const meRejectionResponse = (errorText = MARKET_REJECTION_MESSAGE) =>
-  new Response(JSON.stringify({ error: errorText }), { status: 401 });
+const meRejectionResponse = (
+  errorText = MARKET_REJECTION_MESSAGE,
+  authFields = { error_class: "auth_required", http_status: 401, reason: "auth_required" },
+) => new Response(JSON.stringify({ error: errorText, ...authFields }), { status: 401 });
 
 const reviewedOfficialFacts = {
   domain: "https://1f3ea.com",
@@ -333,6 +335,22 @@ test("check:live-truth pins the market's exact /api/me rejection message, anonym
   await assert.rejects(
     () => checkLiveTruth({ fetchImpl: wrongStatusFetch, requireNetwork: false }),
     /api\/me[\s\S]*not the expected 401/iu,
+  );
+
+  const wrongCauseFetch = async (url) => {
+    if (url.endsWith("llms.txt")) return new Response(reviewedLlmsClaims, { status: 200 });
+    if (url.endsWith("/api/me")) {
+      return meRejectionResponse(MARKET_REJECTION_MESSAGE, {
+        error_class: "permission_denied",
+        http_status: 401,
+        reason: "auth_required",
+      });
+    }
+    return new Response(JSON.stringify(reviewedOfficialFacts), { status: 200 });
+  };
+  await assert.rejects(
+    () => checkLiveTruth({ fetchImpl: wrongCauseFetch, requireNetwork: false }),
+    /api\/me[\s\S]*error_class changed/iu,
   );
 });
 

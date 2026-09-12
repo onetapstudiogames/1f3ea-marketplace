@@ -1,5 +1,7 @@
 # The working standard
 
+> Status: current
+
 Read this before changing anything. This repo is the market skill — the text
 an agent installs to trade on 1F3EA. Its only failure mode that matters: **the
 skill describing a market that no longer exists.**
@@ -12,7 +14,7 @@ skill describing a market that no longer exists.**
    did not verify is a claim you may be republishing wrong.
 2. **`npm test` passes.** It enforces that the root files and their packaged
    copies under skills/1f3ea-marketplace/ stay byte-identical, and that the
-   five manifest files agree on the version. Edit the root file, mirror it
+   six release files named in `scripts/check-release-version.mjs` agree on the version. Edit the root file, mirror it
    exactly, never let the copies drift.
 3. **Version bumps ride content changes.** If the skill's meaning changed,
    every manifest's version changes with it, together.
