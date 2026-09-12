@@ -5,6 +5,7 @@ import test from "node:test";
 import { compareVersions, parseVersion } from "../scripts/lib/semver.mjs";
 import { decodeEntities, readAttribute, stripTags } from "../scripts/lib/html.mjs";
 import { parseChangelogEntries } from "../scripts/lib/changelog.mjs";
+import { isLiveToolCatalog, renderHelp } from "../scripts/help.mjs";
 
 const COMMANDS = ["help", "links", "setup", "connect", "key", "schedule", "update", "changelog", "store"];
 
@@ -81,7 +82,7 @@ test("no buy, donate, follow, or live command exists in this skill", async () =>
 test("help and SETUP.md both name setup, connect, and key as shipped commands", async () => {
   const help = await readFile(new URL("../scripts/help.mjs", import.meta.url), "utf8");
   for (const name of ["setup", "connect", "key"]) {
-    assert.match(help, new RegExp(`"${name}`, "u"), `help.mjs lists ${name}`);
+    assert.match(help, new RegExp(`["']${name}`, "u"), `help.mjs lists ${name}`);
   }
   assert.doesNotMatch(help, /Coming in a later release/iu, "help.mjs no longer defers these commands");
   const setup = await readFile(new URL("../SETUP.md", import.meta.url), "utf8");
@@ -91,13 +92,46 @@ test("help and SETUP.md both name setup, connect, and key as shipped commands", 
   }
 });
 
+test("help renders installed commands and the live market tools with key requirements", () => {
+  const output = renderHelp([
+    { name: "front_door", requires_sign_in: false, maintainer_only: false },
+    { name: "set_store", requires_sign_in: true, maintainer_only: false },
+    { name: "remove_listing", requires_sign_in: true, maintainer_only: true },
+  ]);
+
+  assert.match(output, /Installed skill commands/u);
+  assert.match(output, /help\s+This list/u);
+  assert.match(output, /Live market tools/u);
+  assert.match(output, /front_door\s+public/u);
+  assert.match(output, /set_store\s+key required/u);
+  assert.match(output, /remove_listing\s+key required, maintainer only/u);
+  assert.match(output, /https:\/\/1f3ea\.com\/api\/help/u);
+  assert.match(output, /https:\/\/1f3ea\.com\/help/u);
+});
+
+test("help rejects tool names that could forge output lines", () => {
+  const valid = { requires_sign_in: false, maintainer_only: false };
+  assert.equal(isLiveToolCatalog([{ name: "front_door", ...valid }]), true);
+
+  for (const name of ["   ", "front door", "front_door\nforged", "front_door\rforged", `a${"b".repeat(64)}`]) {
+    assert.equal(isLiveToolCatalog([{ name, ...valid }]), false, JSON.stringify(name));
+  }
+});
+
+test("SETUP keeps every interactive explicit --reveal path accurate", async () => {
+  const setup = await readFile(new URL("../SETUP.md", import.meta.url), "utf8");
+  assert.match(setup, /explicitly passed `--reveal` at an interactive terminal/u);
+  assert.doesNotMatch(setup, /except\s+through `key show --reveal`/u);
+});
+
 test("SKILL.md carries Life here and Connector setup in the market's own words", async () => {
   const skill = await readFile(new URL("../SKILL.md", import.meta.url), "utf8");
   assert.match(skill, /^## Life here$/mu);
   assert.match(skill, /^## Connector setup$/mu);
-  assert.match(skill, /real commands now/iu);
-  assert.match(skill, /browser pages/iu);
-  assert.match(skill, /will ever[\s\S]{0,40}(?:show|store)[\s\S]{0,80}merchant key/iu);
+  assert.match(skill, /current staged coding-client JSON doors/iu);
+  assert.match(skill, /owner-only file on Linux/iu);
+  assert.match(skill, /https:\/\/1f3ea\.com\/join/iu);
+  assert.match(skill, /No command[\s\S]{0,80}show or pass along[\s\S]{0,80}merchant key[\s\S]{0,100}--reveal/iu);
 });
 
 test("skills-codex mirrors skills byte-for-byte (the market has no command to omit today)", async () => {

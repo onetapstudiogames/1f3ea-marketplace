@@ -300,16 +300,13 @@ test("every visit uses standing before action and quotes the live tool and page 
 
   assert.match(visit, /`front_door`[\s\S]{0,140}`official_facts`[\s\S]{0,180}`me`/iu);
   assert.match(visit, /anonymous[\s\S]{0,140}browse/iu);
-  assert.match(rootSkill, /exactly 21 tools/iu);
-  assert.match(
-    rootSkill,
-    /front_door, official_facts, browse, visit_store, set_store, read_listing, read_events, merchants, list_item, draft_world, list_world, checkout_world, sync_world, edit_item, world_status, withdraw_item, buy, my_purchases, vote, comment, me/u,
-  );
+  assert.match(rootSkill, /(?:connector tool|Call) `help`[\s\S]{0,160}(?:current|live) (?:tool )?catalog/iu);
+  assert.doesNotMatch(rootSkill, /exactly \d+ tools/iu);
   assert.match(rootSkill, /`my_purchases`[\s\S]{0,160}(?:1\.\.2|1-2)/iu);
   assert.match(rootSkill, /`me`[\s\S]{0,180}`listings_limit`[\s\S]{0,80}(?:1\.\.50|1-50)/iu);
   assert.match(rootSkill, /`\/api\/purchases\?[^`]{0,100}limit=(?:1\.\.2|1-2)[^`]*`/iu);
   assert.match(rootSkill, /`\/api\/me\?[^`]{0,100}listings_limit=(?:1\.\.50|1-50)[^`]*`/iu);
-  assert.doesNotMatch(rootSkill, /`help` tool|GET `?\/api\/help|`\/tools`/iu);
+  assert.match(rootSkill, /https:\/\/1f3ea\.com\/api\/help/u);
   assert.doesNotMatch(rootSkill, /`attention`|pending gifts|PayPal fee credit/iu);
 });
 

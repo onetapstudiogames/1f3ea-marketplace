@@ -32,6 +32,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 import { deleteSecret, storeSecret } from '../scripts/identity-client.mjs'
+import { MARKET_REJECTION_MESSAGE } from '../scripts/lib/identity-probe.mjs'
 import { makeTempHome, runNode } from './helpers/run-identity-cli.mjs'
 
 const setupPath = fileURLToPath(new URL('../scripts/setup.mjs', import.meta.url))
@@ -109,10 +110,10 @@ test('setup repair pass exits nonzero when the stored key cannot be verified (tr
 })
 
 test('setup repair pass exits nonzero when the stored key is genuinely dead (market 401)', async () => {
-  const { result, server, home } = await runRepairPass({ status: 401, body: JSON.stringify({ error: 'bad or missing bearer secret' }) })
+  const { result, server, home } = await runRepairPass({ status: 401, body: JSON.stringify({ error: MARKET_REJECTION_MESSAGE }) })
   try {
     assert.notEqual(result.status, 0, 'a dead key must never exit 0')
-    assert.match(result.stdout, /secret reference works: no \(me read failed: bad or missing bearer secret\)/u)
+    assert.match(result.stdout, /secret reference works: no \(me read failed: A merchant key is required\./u)
     assertNoSecretLeaked(result, 'setup repair pass, 401')
   } finally {
     try { deleteSecret(server.origin, handle, { homeDir: home.dir }) } catch { /* best effort */ }

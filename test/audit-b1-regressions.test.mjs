@@ -83,6 +83,19 @@ test('store prints the human storefront as canonical and labels the API address 
   assert.match(result.stdout, /Raw public data: https:\/\/1f3ea\.com\/api\/store\/fixture-merchant/u)
 })
 
+test('help prints a valid live catalog and contains malformed catalog responses', () => {
+  const valid = runNetworkCommand('scripts/help.mjs', [], 'help-success')
+  assert.equal(valid.status, 0, valid.stderr)
+  assert.match(valid.stdout, /front_door\s+public/u)
+  assert.match(valid.stdout, /set_store\s+key required/u)
+
+  const malformed = runNetworkCommand('scripts/help.mjs', [], 'help-malformed')
+  assert.notEqual(malformed.status, 0)
+  assert.match(malformed.stdout, /Live market tools[\s\S]*unavailable: response had an invalid tools list/u)
+  assert.match(malformed.stdout, /https:\/\/1f3ea\.com\/api\/help/u)
+  assert.doesNotMatch(malformed.stderr, /TypeError:|^\s*at\s+\S+/mu)
+})
+
 test('identity HTTP refusals keep their numeric status with readable JSON bodies', async () => {
   const originalFetch = globalThis.fetch
   try {

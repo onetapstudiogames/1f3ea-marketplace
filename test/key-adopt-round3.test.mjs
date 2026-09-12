@@ -25,6 +25,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 import { deleteSecret, readSecret, storeSecret } from '../scripts/identity-client.mjs'
+import { MARKET_REJECTION_MESSAGE } from '../scripts/lib/identity-probe.mjs'
 import { startStubMarketServer } from './helpers/stub-market-server.mjs'
 import { makeTempHome, runNode } from './helpers/run-identity-cli.mjs'
 
@@ -70,7 +71,7 @@ async function startControllableMeServer() {
       const handle = owners.get(key)
       if (!handle) {
         res.writeHead(401, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'bad or missing bearer secret' }))
+        res.end(JSON.stringify({ error: MARKET_REJECTION_MESSAGE }))
         return
       }
       res.writeHead(200, { 'content-type': 'application/json' })

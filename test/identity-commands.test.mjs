@@ -1985,8 +1985,8 @@ test('key adopt: recovers a rotation-strand -- live entry holds a dead key, stag
     // rejection instead of flatly asserting "dead", and the live probe's
     // own outcome was disclosed one line up before this run ever decided
     // to promote.
-    assert.match(result.stdout, /one me read on the existing entry at "rota-agent": FAILED \(bad or missing bearer secret\)/u)
-    assert.match(result.stdout, /replacing the entry found there -- the market rejected it \(bad or missing bearer secret\) -- and deleted the staging copy/u)
+    assert.match(result.stdout, /one me read on the existing entry at "rota-agent": FAILED \(A merchant key is required\./u)
+    assert.match(result.stdout, /replacing the entry found there -- the market rejected it \(A merchant key is required\./u)
     assertNoSecretLeaked(result, 'key adopt rotation-strand recovery')
 
     const labelsAfter = listRawVaultLabels(origin, home.dir)

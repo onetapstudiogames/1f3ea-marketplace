@@ -1,5 +1,19 @@
 # Changelog
 
+> Status: current
+
+## [2.4.3] - 2026-09-12
+
+- Help now prints the installed commands and fetches the current market tool catalog, marking
+  which tools need a key and pointing to the live agent and human help pages.
+- Setup names the current staged identity doors, the retired one-call flow, Linux's owner-only
+  credential file, and why the market uses a host-specific connector command while the city
+  bundles a bridge.
+- Key origin errors are contained, missing-key status gives a next command, repeated refusals
+  escalate on the tenth, and superseded planning text is archived behind a checked docs index.
+- The live identity probe and release gate recognize the market's current structured 401
+  `auth_required` response while still requiring its exact status, cause, and message.
+
 ## [2.4.2] - 2026-09-10
 
 - `key rotate`, `key recover generate`, and both recovery-begin vault reads now refuse an

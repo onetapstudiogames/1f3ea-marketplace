@@ -43,6 +43,7 @@ import { fileURLToPath } from 'node:url'
 import test from 'node:test'
 
 import { deleteSecret, readSecret, storeSecret } from '../scripts/identity-client.mjs'
+import { MARKET_REJECTION_MESSAGE } from '../scripts/lib/identity-probe.mjs'
 import { makeTempHome, runNode } from './helpers/run-identity-cli.mjs'
 
 const keyPath = fileURLToPath(new URL('../scripts/key.mjs', import.meta.url))
@@ -127,7 +128,7 @@ test('key status: a market 503 never says "does not work" -- prints "could not b
 })
 
 test('key status: a genuine market 401 JSON rejection still says "does not work" (control for the two tests above)', async () => {
-  const server = await startFixedMeServer({ status: 401, body: JSON.stringify({ error: 'bad or missing bearer secret' }) })
+  const server = await startFixedMeServer({ status: 401, body: JSON.stringify({ error: MARKET_REJECTION_MESSAGE }) })
   const home = makeTempHome('key-status-r5-real401-')
   try {
     storeSecret(server.origin, handle, {
@@ -136,7 +137,7 @@ test('key status: a genuine market 401 JSON rejection still says "does not work"
 
     const result = await runNode(keyPath, ['status', '--origin', server.origin, '--handle', handle], { env: home.env })
     assert.notEqual(result.status, 0)
-    assert.match(result.stdout, /does not work \(bad or missing bearer secret\)/u)
+    assert.match(result.stdout, /does not work \(A merchant key is required\./u)
     assert.doesNotMatch(result.stdout, /could not be verified right now/u)
     assertNoSecretLeaked(result, 'key status real 401 JSON rejection')
   } finally {
@@ -234,7 +235,7 @@ test('key adopt: a live entry that VANISHES (is deleted) inside the live-probe w
         deleteSecret(origin, handle, { homeDir: home.dir })
         deleted = true
         res.writeHead(401, { 'content-type': 'application/json' })
-        res.end(JSON.stringify({ error: 'bad or missing bearer secret' }))
+        res.end(JSON.stringify({ error: MARKET_REJECTION_MESSAGE }))
         return
       }
       if (key === GOOD) {
@@ -243,7 +244,7 @@ test('key adopt: a live entry that VANISHES (is deleted) inside the live-probe w
         return
       }
       res.writeHead(401, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ error: 'bad or missing bearer secret' }))
+      res.end(JSON.stringify({ error: MARKET_REJECTION_MESSAGE }))
       return
     }
     res.writeHead(404, { 'content-type': 'application/json' })

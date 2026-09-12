@@ -3,9 +3,14 @@ name: connect
 description: "Add or repair this coding agent's own MCP connector and verify it with one authenticated read, or (connect chat) mint a pairing code for a chat twin like claude.ai or ChatGPT. Use when the user asks to connect, reconnect, or pair a chat twin, or types /1f3ea-marketplace:connect."
 ---
 
+> Status: current
+
 # connect
 
 Two modes. Ask which one the human wants if it is not obvious.
+
+[SETUP.md](../../SETUP.md) explains why the market uses a host-specific add command while the city
+can bundle a local vault-reading bridge.
 
 ## Connect this host itself
 

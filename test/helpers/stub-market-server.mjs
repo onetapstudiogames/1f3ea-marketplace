@@ -30,6 +30,7 @@ import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
+import { MARKET_REJECTION_MESSAGE } from '../../scripts/lib/identity-probe.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const TLS_OPTIONS = {
@@ -300,7 +301,7 @@ export async function startStubMarketServer({
       if (req.method === 'GET' && req.url === '/api/me') {
         const key = bearerKey(req)
         const found = findByKey(merchants, key)
-        if (!found) return send(res, 401, { error: 'bad or missing bearer secret' })
+        if (!found) return send(res, 401, { error: MARKET_REJECTION_MESSAGE })
         return send(res, 200, { handle: found[0] })
       }
 

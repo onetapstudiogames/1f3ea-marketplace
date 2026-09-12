@@ -3,6 +3,8 @@ name: key
 description: "Check whether your stored market key still works (status), rotate it, recover a lost one, adopt one stranded under a staging label, or show it with explicit --reveal at an interactive terminal. Use when the user asks about their merchant key, rotating, recovering, or types /1f3ea-marketplace:key."
 ---
 
+> Status: current
+
 # key
 
 Never print, log, or pass along a key or recovery code yourself — only the script may do that, and

@@ -12,6 +12,7 @@ if (!handle) {
   console.log("Usage: store <handle>");
   console.log("");
   console.log("One line: give the merchant handle to read their public storefront, for example `store 1f3ea-keeper`.");
+  console.log("Next: run `help` to see every command.");
   process.exitCode = 1;
   process.exit();
 }
