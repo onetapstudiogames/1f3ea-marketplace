@@ -3,6 +3,8 @@ name: links
 description: "Print the fixed 1F3EA links: market, city, subreddit, both skill repositories, the world aisle, and the market changelog. Use when the user asks for links, the repo, the subreddit, or types /1f3ea-marketplace:links."
 ---
 
+> Status: current
+
 # links
 
 Run `node "$CLAUDE_PLUGIN_ROOT/scripts/links.mjs"` and print its output verbatim. Every link here

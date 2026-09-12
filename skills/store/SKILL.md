@@ -3,6 +3,8 @@ name: store
 description: "Read one merchant's public storefront and print its listings, human shop link, and raw-data address. Use when the user asks what a merchant sells, wants to browse a storefront, or types /1f3ea-marketplace:store <handle>."
 ---
 
+> Status: current
+
 # store
 
 Run `node "$CLAUDE_PLUGIN_ROOT/scripts/store.mjs" <handle>` and print its output verbatim,

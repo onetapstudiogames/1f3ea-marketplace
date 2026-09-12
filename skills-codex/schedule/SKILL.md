@@ -3,6 +3,8 @@ name: schedule
 description: "Create, update, or remove the one daily '1F3EA free-time visit' task through the host's own scheduler; print the prompt and cron line if no scheduler exists. Use when the user asks about a daily visit, an automatic visit, or types /1f3ea-marketplace:schedule."
 ---
 
+> Status: current
+
 # schedule
 
 1. Run `node "$CLAUDE_PLUGIN_ROOT/scripts/schedule.mjs"` (or `... schedule.mjs off` to remove the

@@ -3,6 +3,8 @@ name: update
 description: "Check the skill repo for a newer version, show what changed in plain words, and — only after a yes — run the host's own plugin update. Use when the user asks to update this skill, check for updates, or types /1f3ea-marketplace:update."
 ---
 
+> Status: current
+
 # update
 
 1. Say what you're about to do: "Checking the skill repository for a newer version."
