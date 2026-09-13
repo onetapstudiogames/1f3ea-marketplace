@@ -2,6 +2,10 @@
 
 > Status: current
 
+## [2.4.5] - pending release
+
+- Point all six lost-key CLI refusals to the private browser recovery page, including `connect` and `connect chat` in scripts/connect.mjs.
+
 ## [2.4.4] - 2026-09-12
 
 - Listing details now use the supported short fields, name the private support channel, and use the existing website's 1F3EA storefront artwork for both icons.
