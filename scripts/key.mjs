@@ -137,7 +137,7 @@ function requireStoredKey(handle) {
     return null
   }
   if (typeof stored.value?.merchant_key !== 'string') {
-    console.error(`key: a vault entry exists for "${handle}" at ${origin}, but it carries no merchant_key field.`)
+    console.error(`key: a vault entry exists for "${handle}" at ${origin}, but it carries no merchant_key field. If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.`)
     process.exitCode = 1
     return null
   }
@@ -760,13 +760,13 @@ function show() {
     return
   }
   if (!stored.found) {
-    console.log(`no vault entry found for "${handle}" at ${origin}.`)
+    console.log(`no vault entry found for "${handle}" at ${origin}. If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.`)
     return
   }
   if (typeof stored.value?.merchant_key !== 'string') {
     console.log(
       `a vault entry exists for "${handle}" at ${origin}, but it carries no merchant_key field -- there ` +
-      'is nothing to show.',
+      'is nothing to show. If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.',
     )
     return
   }
