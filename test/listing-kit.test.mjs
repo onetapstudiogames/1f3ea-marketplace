@@ -77,7 +77,7 @@ test('generator check catches stale output and conflicting manifest facts', asyn
       await cp(new URL(path, root), destination)
     }
     const run = () => spawnSync(process.execPath, ['scripts/generate-listing-kit.mjs', '--check'], {
-      cwd: fixture, encoding: 'utf8',
+      cwd: new URL(root), encoding: 'utf8', env: { ...process.env, LISTING_KIT_TEST_ROOT: fixture },
     })
     assert.equal(run().status, 0)
     await writeFile(join(fixture, 'docs/LISTING-KIT.md'), 'stale')
@@ -87,6 +87,27 @@ test('generator check catches stale output and conflicting manifest facts', asyn
     const manifest = JSON.parse(await readFile(codexPath, 'utf8'))
     await writeFile(codexPath, JSON.stringify({ ...manifest, version: '0.0.0' }))
     assert.match(run().stderr, /manifests disagree/u)
+    await writeFile(codexPath, JSON.stringify({ ...manifest, interface: { ...manifest.interface, shortDescription: 'x'.repeat(31) } }))
+    assert.match(run().stderr, /exceeds 30 characters/u)
+    await writeFile(codexPath, JSON.stringify(manifest))
+
+    const imagePath = join(fixture, 'assets/1f3ea-storefront.png')
+    const image = await readFile(imagePath)
+    await writeFile(imagePath, Buffer.from('not a PNG'))
+    assert.match(run().stderr, /not a PNG/u)
+    await writeFile(imagePath, image)
+
+    const readmePath = join(fixture, 'README.md')
+    const readme = await readFile(readmePath, 'utf8')
+    await writeFile(readmePath, readme.replace('### Codex', '### Other'))
+    assert.match(run().stderr, /no Codex install follow-up/u)
+    await writeFile(readmePath, readme)
+
+    const changelogPath = join(fixture, 'CHANGELOG.md')
+    const changelog = await readFile(changelogPath, 'utf8')
+    await writeFile(changelogPath, '# Empty changelog\n')
+    assert.match(run().stderr, /missing join or illustration changes/u)
+    await writeFile(changelogPath, changelog)
   } finally {
     await rm(fixture, { recursive: true, force: true })
   }

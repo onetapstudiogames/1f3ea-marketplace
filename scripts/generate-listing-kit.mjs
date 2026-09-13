@@ -5,7 +5,9 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { parseListings } from './lib/listings.mjs'
 
-const root = fileURLToPath(new URL('..', import.meta.url))
+const root = process.argv.includes('--check') && process.env.LISTING_KIT_TEST_ROOT
+  ? process.env.LISTING_KIT_TEST_ROOT
+  : fileURLToPath(new URL('..', import.meta.url))
 const read = file => readFile(join(root, file), 'utf8')
 const manifest = JSON.parse(await read('.codex-plugin/plugin.json'))
 const claudeManifest = JSON.parse(await read('.claude-plugin/plugin.json'))
