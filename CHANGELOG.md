@@ -2,6 +2,10 @@
 
 > Status: current
 
+## [2.4.7] - pending release
+
+- Complete lost-key recovery guidance and keep the staged registration bundle after an uncertain confirmation.
+
 ## [2.4.6] - pending release
 
 - B7 join-2: add one `join` command for merchants, with vault-only key storage, recovery codes in the human's chosen folder, a handle-selected local connector, and one authenticated verification read.

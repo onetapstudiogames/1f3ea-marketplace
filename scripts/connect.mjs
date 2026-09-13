@@ -151,14 +151,14 @@ async function connectHost() {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
       `connect: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. If you have a saved recovery code, the human uses https://1f3ea.com/recovery; ' +
-      'do not register a new identity.',
+      'that unreadable vault entry first. ' +
+      'If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.',
     )
     process.exitCode = 1
     return
   }
   if (!stored.found || typeof stored.value?.merchant_key !== 'string') {
-    console.log(`one me read: skipped — no vault entry found for "${handle}" at ${origin}.`)
+    console.log(`one me read: skipped — no vault entry found for "${handle}" at ${origin}. If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.`)
     return
   }
   const probe = await probeMe(origin, stored.value.merchant_key, { allowOrigin })
@@ -190,14 +190,14 @@ async function connectChat() {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
       `connect chat: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. If you have a saved recovery code, the human uses https://1f3ea.com/recovery; ' +
-      'do not register a new identity.',
+      'that unreadable vault entry first. ' +
+      'If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.',
     )
     process.exitCode = 1
     return
   }
   if (!stored.found || typeof stored.value?.merchant_key !== 'string') {
-    console.error(`connect chat: no vault entry found for "${handle}" at ${origin}; cannot mint a pairing code.`)
+    console.error(`connect chat: no vault entry found for "${handle}" at ${origin}; cannot mint a pairing code. If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.`)
     process.exitCode = 1
     return
   }

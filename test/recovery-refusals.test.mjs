@@ -9,7 +9,7 @@ const scriptsDir = new URL('../scripts/', import.meta.url)
 // which is exactly how the two copies in scripts/connect.mjs stayed wrong
 // while the suite stayed green. Discover the copies instead of listing them:
 // any new or missed copy is then held to the same rule automatically.
-const REFUSAL = /if you have a saved recovery code[^\n]+/giu
+const REFUSAL = /if the key is gone[^\n]+/giu
 
 async function collectScripts(dir) {
   const entries = await readdir(dir, { withFileTypes: true })
