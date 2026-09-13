@@ -4,7 +4,7 @@
 
 ## [2.4.7] - pending release
 
-- Complete lost-key recovery guidance and keep the staged registration bundle after an uncertain confirmation.
+- Separate the two lost-key cases everywhere they are stated: an unreadable vault entry is repaired and never worked around with a second identity, while a key that is genuinely gone is replaced with one unused recovery code. Keep the staged registration bundle after an uncertain confirmation.
 
 ## [2.4.6] - pending release
 

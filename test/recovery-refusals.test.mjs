@@ -4,12 +4,13 @@ import test from 'node:test'
 
 const scriptsDir = new URL('../scripts/', import.meta.url)
 
-// The refusal sentence is copied into several CLI commands. An earlier
+// The refusal sentence used to be copied into several CLI commands. An earlier
 // version of this test named the two files that happened to be fixed first,
 // which is exactly how the two copies in scripts/connect.mjs stayed wrong
 // while the suite stayed green. Discover the copies instead of listing them:
 // any new or missed copy is then held to the same rule automatically.
 const REFUSAL = /if the key is gone[^\n]+/giu
+const GUIDANCE_MODULE = 'scripts/lib/recovery-guidance.mjs'
 
 async function collectScripts(dir) {
   const entries = await readdir(dir, { withFileTypes: true })
@@ -34,6 +35,11 @@ test('every lost-key CLI refusal points the human to browser recovery', async ()
       found += 1
       assert.match(refusal, /https:\/\/1f3ea\.com\/recovery/u, `${where}: browser recovery page not named`)
       assert.doesNotMatch(refusal, /run `key recover begin`/u, `${where}: still sends recovery-code entry to the local command`)
+    }
+    // The sentence now has one home. A retyped copy is how the two cases
+    // drifted apart in the first place.
+    if (where !== GUIDANCE_MODULE) {
+      assert.doesNotMatch(source, REFUSAL, `${where}: retypes the lost-key sentence instead of importing it`)
     }
   }
 

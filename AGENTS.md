@@ -38,4 +38,6 @@ skill describing a market that no longer exists.**
 
 Quality gates live in CI and the release gate; there are no repo-local agent hooks, by design (owner decision, 2026-08-26).
 
-Identity client concerns live under `scripts/lib/`: `identity-input.mjs` owns validation, argument and secret I/O; `identity-http.mjs` owns the guarded HTTP helpers; `vault-backends.mjs` owns Windows Credential Manager, macOS Keychain, and the 0600 file backend; `vault-index.mjs` owns labels and the non-secret index; `vault-locks.mjs` owns index and per-handle locks; `promote.mjs` owns staged promotion; `register.mjs` owns registration; and `rotate-recover.mjs` owns rotation, recovery, and pairing. `scripts/identity-client.mjs` remains the CLI and public export facade.
+Identity client concerns live under `scripts/lib/`: `identity-input.mjs` owns validation, argument and secret I/O; `identity-http.mjs` owns the guarded HTTP helpers; `vault-backends.mjs` owns Windows Credential Manager, macOS Keychain, and the 0600 file backend; `vault-index.mjs` owns labels and the non-secret index; `vault-locks.mjs` owns index and per-handle locks; `recovery-guidance.mjs` owns the two lost-key
+sentences (an unreadable entry is not a lost key, and only one of the two ever allows a new
+identity); `promote.mjs` owns staged promotion; `register.mjs` owns registration; and `rotate-recover.mjs` owns rotation, recovery, and pairing. `scripts/identity-client.mjs` remains the CLI and public export facade.

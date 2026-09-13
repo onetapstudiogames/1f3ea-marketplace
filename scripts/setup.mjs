@@ -61,6 +61,7 @@ import {
   readSecret, SecretReadFailure, listVaultLabels, HANDLE_RE, RESERVED_HANDLE_SUBSTRING_RE, isValidModel,
 } from './identity-client.mjs'
 import { assertAllowedOrigin } from './lib/origin-guard.mjs'
+import { UNREADABLE_ENTRY_GUIDANCE } from './lib/recovery-guidance.mjs'
 
 // This file never calls `process.exit()`. It used to, through a shared
 // `exitClean()` helper that awaited a fixed drain first -- added because an
@@ -210,9 +211,8 @@ async function main() {
       if (!(error instanceof SecretReadFailure)) throw error
       console.error(
         `${label}: ${error.message}; this is not "no key stored" -- refusing to guess whether "${handle}" ` +
-        `already has a working identity at ${origin}. Repair or remove that unreadable vault entry first. ` +
-        'If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity. ' +
-        'After resolving the unreadable entry, re-run setup.',
+        `already has a working identity at ${origin}. ` +
+        UNREADABLE_ENTRY_GUIDANCE,
       )
       process.exitCode = 1
       throw new SetupRefusal()

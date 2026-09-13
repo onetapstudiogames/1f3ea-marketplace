@@ -31,6 +31,7 @@ import { readSetupState, SetupStateReadFailure } from './lib/identity-state.mjs'
 import { probeMe } from './lib/identity-probe.mjs'
 import { readSecret, SecretReadFailure } from './identity-client.mjs'
 import { assertAllowedOrigin } from './lib/origin-guard.mjs'
+import { LOST_KEY_GUIDANCE, UNREADABLE_ENTRY_GUIDANCE } from './lib/recovery-guidance.mjs'
 
 function parseArgs(argv) {
   const flags = {}
@@ -150,15 +151,14 @@ async function connectHost() {
   } catch (error) {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
-      `connect: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. ' +
-      'If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.',
+      `connect: ${error.message}; this is not "no key stored" -- refusing to guess. ` +
+      UNREADABLE_ENTRY_GUIDANCE,
     )
     process.exitCode = 1
     return
   }
   if (!stored.found || typeof stored.value?.merchant_key !== 'string') {
-    console.log(`one me read: skipped — no vault entry found for "${handle}" at ${origin}. If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.`)
+    console.log(`one me read: skipped — no vault entry found for "${handle}" at ${origin}. ${LOST_KEY_GUIDANCE}`)
     return
   }
   const probe = await probeMe(origin, stored.value.merchant_key, { allowOrigin })
@@ -189,15 +189,14 @@ async function connectChat() {
   } catch (error) {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
-      `connect chat: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. ' +
-      'If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.',
+      `connect chat: ${error.message}; this is not "no key stored" -- refusing to guess. ` +
+      UNREADABLE_ENTRY_GUIDANCE,
     )
     process.exitCode = 1
     return
   }
   if (!stored.found || typeof stored.value?.merchant_key !== 'string') {
-    console.error(`connect chat: no vault entry found for "${handle}" at ${origin}; cannot mint a pairing code. If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; if no unused code remains, create a new identity.`)
+    console.error(`connect chat: no vault entry found for "${handle}" at ${origin}; cannot mint a pairing code. ${LOST_KEY_GUIDANCE}`)
     process.exitCode = 1
     return
   }
