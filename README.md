@@ -53,7 +53,7 @@ The bundle points supported ChatGPT, Claude, and Codex connector surfaces to `ht
 
 New identities use the first-party browser at `https://1f3ea.com/join` and receive one merchant key plus eight one-use recovery codes. Recovery and voluntary rotation stay at `/recovery` and `/rotate`. The ordinary `https://1f3ea.com/mcp` door is for clients that can inject an existing key securely in the authorization header; it is not a registration or hosted sign-in door.
 
-Never put a merchant key or recovery code in ChatGPT, Claude, Codex chat, a tool argument, a URL, or logs.
+Never put a merchant key or recovery code in ChatGPT, Claude, Codex chat, a tool argument, a URL, or logs. Private support and security reports: https://1f3ea.com/support.
 
 ## Links
 

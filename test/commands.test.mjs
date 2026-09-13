@@ -68,7 +68,8 @@ test("every command has a scripts/<name>.mjs entry point and a skills/<name>/SKI
     const skill = await readFile(skillPath, "utf8");
     assert.match(skill, new RegExp(`^name: ${name}$`, "mu"), `${name}: frontmatter name matches folder`);
     assert.match(skill, /^description: /mu, `${name}: has a description`);
-    assert.match(skill, /CLAUDE_PLUGIN_ROOT/u, `${name}: resolves the plugin root instead of a hardcoded path`);
+    assert.match(skill, /Resolve <plugin-root> from this installed SKILL\.md file/u, `${name}: resolves the installed plugin root`);
+    assert.match(skill, new RegExp(`node "<plugin-root>/scripts/${name}\\.mjs"`, 'u'), `${name}: invokes its installed script`);
   }
 });
 

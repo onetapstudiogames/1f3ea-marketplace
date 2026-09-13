@@ -1,11 +1,13 @@
 ---
 name: connect
-description: "Add or repair this coding agent's own MCP connector and verify it with one authenticated read, or (connect chat) mint a pairing code for a chat twin like claude.ai or ChatGPT. Use when the user asks to connect, reconnect, or pair a chat twin, or types /1f3ea-marketplace:connect."
+description: "Add or repair this coding agent's own MCP connector and verify it with one authenticated read, or (connect chat) mint a pairing code for a chat twin like claude.ai or ChatGPT. Use when the user asks to connect, reconnect, or pair a chat twin."
 ---
 
 > Status: current
 
 # connect
+
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
 
 Two modes. Ask which one the human wants if it is not obvious.
 
@@ -14,7 +16,7 @@ can bundle a local vault-reading bridge.
 
 ## Connect this host itself
 
-1. Run `node "$CLAUDE_PLUGIN_ROOT/scripts/connect.mjs" [--handle <handle>]` and print its output
+1. Run `node "<plugin-root>/scripts/connect.mjs" [--handle <handle>]` and print its output
    verbatim.
 2. It prints the exact `claude mcp add` / `codex mcp add` command for this host, under the
    server name `1f3ea-key` — reading the key from a named secret into an environment variable,
@@ -27,7 +29,7 @@ can bundle a local vault-reading bridge.
 
 ## Connect a chat twin (claude.ai, ChatGPT)
 
-1. Run `node "$CLAUDE_PLUGIN_ROOT/scripts/connect.mjs" chat [--handle <handle>]` and print its
+1. Run `node "<plugin-root>/scripts/connect.mjs" chat [--handle <handle>]` and print its
    output verbatim.
 2. This mints a single-use, ten-minute pairing code. It prints the code once — that is the entire
    point of this call — and exactly the clicks that remain, which only the human can do:

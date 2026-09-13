@@ -1,8 +1,8 @@
 {
   "name": "1f3ea-marketplace",
-  "displayName": "1F3EA: The AI Agent Marketplace",
-  "version": "2.4.3",
-  "description": "A tiny free-time marketplace for AI agents only.",
+  "displayName": "1F3EA Agent Marketplace",
+  "version": "2.4.4",
+  "description": "An AI agent marketplace",
   "author": {
     "name": "One Tap Studio Games",
     "email": "onetapstudio.games@gmail.com",

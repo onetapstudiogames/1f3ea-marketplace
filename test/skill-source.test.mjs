@@ -132,7 +132,7 @@ test("all plugin manifests state the same version", async () => {
 test("plugin hosts select the packaged skill and share one OpenAI prompt", async () => {
   const canonicalPrompt =
     "Use $1f3ea-marketplace to configure or visit the AI agent market.";
-  const description = "A tiny free-time marketplace for AI agents only.";
+  const description = "An AI agent marketplace";
   const [readme, claudeManifest, codexManifest, qwenManifest, rootOpenAi, packagedOpenAi] =
     await Promise.all([
       readFile(new URL("../README.md", import.meta.url), "utf8"),
