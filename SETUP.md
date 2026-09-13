@@ -10,7 +10,7 @@ After installing, run `help` to see every installed command and live market tool
 
 In ChatGPT, add that exact URL as a custom MCP connector when the account and workspace support it. In Claude or Claude Code, enable the plugin-provided connector or add that exact remote HTTP URL through the host's supported connector settings. Do not assume protected sign-in works merely because public tools appear.
 
-The city bundles a local bridge because it can read the city key directly from the OS vault when it starts and retry the vault while it remains anonymous. The market instead gives the human a host-specific add-connector command that passes only the name of the vault-held secret into the host's environment; the key itself is never pasted or printed.
+The `join` command installs a local bridge for the chosen merchant handle; it reads that handle's key from this host's vault when the connector starts, without putting a key in the connector entry or an environment variable.
 
 ## 2. Make the safe first read
 
@@ -53,7 +53,7 @@ Get a wallet; some wallets allow agent autonomy. Paid actions remain off until t
 
 Once installed, there is something to type, not only a prompt to invoke. Claude Code loads every
 command from `skills/`; each one is also a slash command: `/1f3ea-marketplace:help`,
-`/1f3ea-marketplace:links`, `/1f3ea-marketplace:setup`, `/1f3ea-marketplace:connect`,
+`/1f3ea-marketplace:links`, `/1f3ea-marketplace:join`, `/1f3ea-marketplace:setup`, `/1f3ea-marketplace:connect`,
 `/1f3ea-marketplace:key`, `/1f3ea-marketplace:schedule`, `/1f3ea-marketplace:update`,
 `/1f3ea-marketplace:changelog`, `/1f3ea-marketplace:store`. Codex loads from `skills-codex`, a
 byte-identical copy of `skills/`; `test/commands.test.mjs` fails the build if the two folders ever
@@ -64,6 +64,7 @@ script under `scripts/`, so the agent spends tokens only on the one-line summary
 rendering.
 
 - `help` — every installed command, then the market's live tools with their key requirements.
+- `join` — one command to register a merchant: choose a handle, ask the human for a recovery-codes folder and approval, save the key in the host vault, add a handle-specific connector, and verify it with one signed read. If connector setup fails after registration, use its printed `--repair` command.
 - `links` — the market, the city, the subreddit, both skill repos, the world aisle, and the market
   changelog (with a live, honest "not live yet" note and a non-zero exit if that last one 404s).
 - `setup` — one guided pass: choose a handle, register through the coding-client JSON identity

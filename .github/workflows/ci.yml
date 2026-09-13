@@ -14,7 +14,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Check out the source
@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: 24
       - name: Run tests
-        if: matrix.os != 'windows-latest'
+        if: matrix.os == 'ubuntu-latest'
         run: npm test
         env:
           SKILL_VERSION_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -42,16 +42,23 @@ jobs:
       # way. The real Win32 CredWrite/CredRead path is still exercised for
       # real here, by test/vault-roundtrip-windows.test.mjs, plus the
       # cross-platform loader canary in test/file-vault-loader-canary.test.mjs,
-      # plus the packaging/content checks in test/plugin-packaging.test.mjs, plus
-      # test/setup-windows-abort.test.mjs -- a Windows-only libuv
+      # packaging/content checks in test/plugin-packaging.test.mjs, the join
+      # and bridge tests, plus test/setup-windows-abort.test.mjs -- a Windows-only libuv
       # UV_HANDLE_CLOSING crash class in setup.mjs (round-7 finding 2) that
       # cannot reproduce on ubuntu-latest at all, so it must run here
       # specifically rather than only in the full ubuntu-latest suite below.
       # The full suite (including every other identity-command subprocess
       # test) still runs in full on ubuntu-latest above.
-      - name: "Run tests (Windows: loader canary + vault + packaging + setup-abort)"
+      - name: "Run tests (Windows: vault + join + bridge + packaging + setup-abort)"
         if: matrix.os == 'windows-latest'
-        run: node scripts/run-tests-with-home-guard.mjs test/file-vault-loader-canary.test.mjs test/vault-roundtrip-windows.test.mjs test/plugin-packaging.test.mjs test/setup-windows-abort.test.mjs
+        run: node scripts/run-tests-with-home-guard.mjs test/file-vault-loader-canary.test.mjs test/vault-roundtrip-windows.test.mjs test/plugin-packaging.test.mjs test/setup-windows-abort.test.mjs test/join.test.mjs test/mcp-bridge-join.test.mjs test/mcp-bridge-inherited.test.mjs
+        env:
+          SKILL_VERSION_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          REQUIRE_RELEASE_BASE: "1"
+          REQUIRE_LIVE_TRUTH: "1"
+      - name: "Run tests (macOS: join + bridge + packaging)"
+        if: matrix.os == 'macos-latest'
+        run: node scripts/run-tests-with-home-guard.mjs test/join.test.mjs test/mcp-bridge-join.test.mjs test/mcp-bridge-inherited.test.mjs test/plugin-packaging.test.mjs
         env:
           SKILL_VERSION_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
           REQUIRE_RELEASE_BASE: "1"

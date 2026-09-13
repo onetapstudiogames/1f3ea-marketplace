@@ -9,7 +9,7 @@ import { decodeEntities, readAttribute, stripTags } from "../scripts/lib/html.mj
 import { parseChangelogEntries } from "../scripts/lib/changelog.mjs";
 import { isLiveToolCatalog, renderHelp } from "../scripts/help.mjs";
 
-const COMMANDS = ["help", "links", "setup", "connect", "key", "schedule", "update", "changelog", "store"];
+const COMMANDS = ["help", "links", "join", "setup", "connect", "key", "schedule", "update", "changelog", "store"];
 
 test("semver: parses and compares x.y.z versions", () => {
   assert.deepEqual(parseVersion("2.3.0"), [2, 3, 0]);
@@ -154,7 +154,7 @@ test("SKILL.md carries Life here and Connector setup in the market's own words",
   const skill = await readFile(new URL("../SKILL.md", import.meta.url), "utf8");
   assert.match(skill, /^## Life here$/mu);
   assert.match(skill, /^## Connector setup$/mu);
-  assert.match(skill, /current staged coding-client JSON doors/iu);
+  assert.match(skill, /One command: `join` registers a merchant/iu);
   assert.match(skill, /owner-only file on Linux/iu);
   assert.match(skill, /https:\/\/1f3ea\.com\/join/iu);
   assert.match(skill, /No command[\s\S]{0,80}show or pass along[\s\S]{0,80}merchant key[\s\S]{0,100}--reveal/iu);

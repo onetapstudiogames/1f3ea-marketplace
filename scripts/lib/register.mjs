@@ -5,6 +5,10 @@ import { cancelStage, postJson } from './identity-http.mjs'
 import { promoteReplacementKey } from './promote.mjs'
 import { deleteSecret, readSecret, storeSecret } from './vault-backends.mjs'
 import { pendingLabel } from './vault-index.mjs'
+import { existsSync, statSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
+
+const RECOVERY_CODE_RE = /^1f3ea_rc_[0-9a-f]{64}$/u
 
 async function register(flags) {
   const origin = originOf(flags)
@@ -39,6 +43,16 @@ async function register(flags) {
     )
   }
   const replaceVaultEntry = flags['replace-vault-entry'] === true
+  const codesDir = flags['codes-dir']
+  if (codesDir !== undefined && (typeof codesDir !== 'string' || !isAbsolute(codesDir))) {
+    throw new Error('--codes-dir must name an existing absolute folder chosen by the human')
+  }
+  if (codesDir !== undefined && (!statSync(codesDir, { throwIfNoEntry: false })?.isDirectory())) {
+    throw new Error('--codes-dir must name an existing folder chosen by the human')
+  }
+  if (codesDir !== undefined && existsSync(join(codesDir, `1f3ea-${handle}-recovery-codes.txt`))) {
+    throw new Error('the recovery codes file already exists in --codes-dir; choose another folder before registering')
+  }
 
   let humanApproved = flags['human-approved'] === true
   if (!humanApproved) {
@@ -67,6 +81,15 @@ async function register(flags) {
   // here on ITS answer is the identity of record, never the spelling this
   // call was invoked with (see the module comment on HANDLE_RE above).
   const stagedHandle = typeof staged.handle === 'string' ? staged.handle : handle
+  if (codesDir !== undefined && (
+    !Array.isArray(staged.recovery_codes)
+    || staged.recovery_codes.length !== 8
+    || staged.recovery_codes.some(code => typeof code !== 'string' || !RECOVERY_CODE_RE.test(code))
+    || new Set(staged.recovery_codes).size !== 8
+  )) {
+    await cancelStage(origin, '/api/register', staged.session, staged.csrf)
+    throw new Error('the registration door did not return eight distinct valid recovery codes; nothing was stored or confirmed')
+  }
 
   // Validated here, before stagedHandle is ever used as a vault label -- for
   // the pre-flight existing-entry check immediately below, the staging
@@ -137,10 +160,25 @@ async function register(flags) {
     handle: stagedHandle,
     client_class: clientClass,
     merchant_key: staged.merchant_key,
-    recovery_codes: staged.recovery_codes,
+    ...(codesDir === undefined ? { recovery_codes: staged.recovery_codes } : {}),
     origin,
     stored_at: new Date().toISOString(),
   })
+
+  // The codes reach only the human's chosen folder. Reserve the file before
+  // confirm, so a file failure cannot leave a confirmed identity without its
+  // recovery codes. The staged vault entry contains the key, never the codes.
+  let codesPath
+  if (codesDir !== undefined) {
+    codesPath = join(codesDir, `1f3ea-${stagedHandle}-recovery-codes.txt`)
+    try {
+      writeFileSync(codesPath, `${staged.recovery_codes.join('\n')}\n`, { flag: 'wx', mode: 0o600 })
+    } catch (error) {
+      deleteSecret(origin, stagingLabel)
+      await cancelStage(origin, '/api/register', staged.session, staged.csrf)
+      throw new Error(`recovery codes could not be written to the chosen folder; registration was cancelled. ${error.message}`)
+    }
+  }
 
   let confirmed
   try {
@@ -151,8 +189,12 @@ async function register(flags) {
       merchant_key: staged.merchant_key,
     })
   } catch (error) {
-    deleteSecret(origin, stagingLabel)
-    await cancelStage(origin, '/api/register', staged.session, staged.csrf)
+    if (codesDir === undefined) {
+      deleteSecret(origin, stagingLabel)
+      await cancelStage(origin, '/api/register', staged.session, staged.csrf)
+    } else {
+      throw new Error(`confirmation outcome is uncertain; the key remains under staging label "${stagingLabel}" and recovery codes remain at "${codesPath}". Run key status/adopt before retrying. ${error.message}`)
+    }
     throw error
   }
 
@@ -185,8 +227,10 @@ async function register(flags) {
       `refusing to store or print the handle ${JSON.stringify(finalHandle)} the market confirmed for this ` +
       `registration: it does not match the local handle rule ${HANDLE_RE.source}, or contains the reserved ` +
       '"--pending-" sequence this script uses for its own in-flight staging labels. The merchant was already ' +
-      'created server-side under that exact spelling, and its confirmed merchant key and recovery codes were ' +
-      `NOT lost -- they are still stored under the staging label "${stagingLabel}" and nowhere else. This ` +
+      'created server-side under that exact spelling, and its confirmed merchant key was not lost: ' +
+      `it is stored under the staging label "${stagingLabel}". ` +
+      (codesPath ? `Recovery codes are at "${codesPath}". ` : 'Recovery codes remain in that staged vault bundle. ') +
+      'This ' +
       'script will not store them automatically for a handle that fails its own naming rule; `key show ' +
       `--handle ${stagingLabel} --reveal\` reads them back by hand, and \`key adopt\` has no use here since ` +
       'it also refuses a handle that fails this same rule -- whatever label you choose must satisfy it too.',
@@ -204,7 +248,7 @@ async function register(flags) {
   // refusing what the caller explicitly asked to replace.
   const location = promoteReplacementKey(origin, finalHandle, stagingLabel, staged.merchant_key, () => ({
     client_class: clientClass,
-    recovery_codes: staged.recovery_codes,
+    ...(codesDir === undefined ? { recovery_codes: staged.recovery_codes } : {}),
   }), {}, {
     refuseIfPresent: !replaceVaultEntry,
     keyNoun: 'the confirmed merchant key from this registration',
@@ -215,6 +259,7 @@ async function register(flags) {
   console.log(`handle: ${finalHandle}`)
   console.log(`merchant_id: ${confirmed.merchant_id}`)
   console.log(`stored: ${location}`)
+  if (codesPath) console.log(`codes: ${codesPath}`)
 }
 
 

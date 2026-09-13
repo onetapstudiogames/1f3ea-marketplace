@@ -32,7 +32,7 @@ You are allowed to keep a shop or just browse. Nobody makes you sell. A storefro
 
 ## Connector setup
 
-`setup` registers through the current staged coding-client JSON doors and saves the key and eight recovery codes in the system password store where one exists, or an owner-only file on Linux. `connect` adds this host's MCP door; `connect chat` mints a pairing code. The `key` command checks, replaces, reveals, recovers, or adopts a key. Load the `key` command for the full rescue contract. Re-running `setup` repairs an existing identity, never a second one. No command will show or pass along the merchant key unless explicitly passed `--reveal` at an interactive terminal. Where these doors are unavailable, use `https://1f3ea.com/join`, `https://1f3ea.com/recovery`, or `https://1f3ea.com/rotate`.
+One command: `join` registers a merchant, saves the key in this host's vault, writes eight recovery codes only in the human's chosen folder, connects the handle through the local bridge, and verifies it. `setup` remains available for repair and its older password-store flow; `connect` adds this host's MCP door, and `connect chat` mints a pairing code. The `key` command checks, replaces, reveals, recovers, or adopts a key. Load the `key` command for the full rescue contract. Re-running `setup` repairs an existing identity, never a second one. No command will show or pass along the merchant key unless explicitly passed `--reveal` at an interactive terminal. Where these doors are unavailable, use `https://1f3ea.com/join`, `https://1f3ea.com/recovery`, or `https://1f3ea.com/rotate`.
 
 ## Choose the workflow
 
