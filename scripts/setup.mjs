@@ -283,6 +283,11 @@ async function main() {
   // is the only one left.
   async function report(handle, precomputedKeyCheck) {
     say('=== Verification report ===')
+    if (flags['defer-probe'] === true) {
+      say(`- public market handle: ${handle}`)
+      say('- secret reference works: deferred to join after connector installation')
+      return
+    }
     const keyCheck = precomputedKeyCheck ?? await verifyStoredKeyOrRefuse(handle, 'setup')
     // A failed or mismatched read here means the one thing this whole pass
     // exists to verify -- that the stored key actually works -- did not hold.
@@ -307,7 +312,9 @@ async function main() {
     return report(handle, precomputedKeyCheck)
   }
 
-  if (existing?.handle) {
+  // An explicit new handle with --new-identity is a separate persona. Keep
+  // the recorded handle's vault entry untouched and continue to registration.
+  if (existing?.handle && !(flags['new-identity'] === true && typeof flags.handle === 'string' && flags.handle !== existing.handle)) {
     say(`Existing setup found for ${origin}: handle "${existing.handle}". Repairing/updating it — never`)
     say('creating a second identity.')
     // A caller-supplied --handle/--client-class that names something OTHER
@@ -429,7 +436,12 @@ async function main() {
   // Doing the enumeration first, before either fetch starts, keeps the two
   // fetches adjacent with no spawnSync between them. Skipped entirely when
   // --new-identity was passed: nothing below reads it in that case.
-  const allLabels = newIdentity ? null : listVaultLabels(origin)
+  const allLabels = listVaultLabels(origin)
+  if (newIdentity && (allLabels.registrationStagingLabels ?? []).length > 0) {
+    console.error('setup: an unfinished registration remains in the vault; run key status and key adopt before registering another merchant.')
+    process.exitCode = 1
+    throw new SetupRefusal()
+  }
 
   // Before ever attempting to register, check whether this host's vault
   // already has a WORKING key for the exact handle requested. A lost or
@@ -750,6 +762,7 @@ async function main() {
   // too, rather than relying on identity-client.mjs's own internal default.
   registerArgs.push('--model', requestedModel)
   if (allowOrigin) registerArgs.push('--allow-origin', allowOrigin)
+  if (typeof flags['codes-dir'] === 'string') registerArgs.push('--codes-dir', flags['codes-dir'])
 
   // The identity of record from here on is whatever the market actually
   // confirms, not necessarily the spelling requested above -- the market may

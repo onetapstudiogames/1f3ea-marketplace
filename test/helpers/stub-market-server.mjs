@@ -279,7 +279,8 @@ const REGISTER_CONFIRM_BARRIER_TIMEOUT_MS = 10_000
  */
 export async function startStubMarketServer({
   registerConfirmBarrier, pairingUnavailable = false, rotateConfirmHandleOverride, recoveryConfirmHandleOverride,
-  registerStageHandleOverride, codingClientDoorsDormant = false,
+  registerStageHandleOverride, registerStageRecoveryCodesOverride,
+  codingClientDoorsDormant = false, registerConfirmDropResponse = false, onMeRead,
 } = {}) {
   const merchants = new Map()
   // Every pending map is keyed by `session` (an opaque value, unrelated to
@@ -291,6 +292,7 @@ export async function startStubMarketServer({
   const pendingRecoveries = new Map() // session -> { handle, merchant_key, csrf }
   let confirmBarrierWaiters = []
   let confirmBarrierTimer = null
+  let meReadCount = 0
 
   function findByKey(map, key) {
     return [...map.entries()].find(([, value]) => value.merchant_key === key)
@@ -299,6 +301,8 @@ export async function startStubMarketServer({
   const server = createHttpsServer(TLS_OPTIONS, async (req, res) => {
     try {
       if (req.method === 'GET' && req.url === '/api/me') {
+        meReadCount += 1
+        onMeRead?.()
         const key = bearerKey(req)
         const found = findByKey(merchants, key)
         if (!found) return send(res, 401, { error: MARKET_REJECTION_MESSAGE })
@@ -379,7 +383,8 @@ export async function startStubMarketServer({
           return send(res, 200, {
             status: 'staged', handle: registerStageHandleOverride ?? entry.handle, client_class: entry.client_class,
             session, csrf: entry.csrf, expires_in_seconds: CEREMONY_SECONDS,
-            merchant_key: entry.merchant_key, recovery_codes: entry.recovery_codes,
+            merchant_key: entry.merchant_key,
+            recovery_codes: registerStageRecoveryCodesOverride ?? entry.recovery_codes,
             instructions: 'Save the merchant key and all eight recovery codes now; confirm or cancel within the window.',
           })
         }
@@ -442,6 +447,10 @@ export async function startStubMarketServer({
           merchants.set(pending.handle, {
             merchant_key: pending.merchant_key, recovery_codes: pending.recovery_codes, client_class: pending.client_class,
           })
+          if (registerConfirmDropResponse) {
+            req.socket.destroy()
+            return
+          }
           return send(res, 200, { status: 'confirmed', merchant_id: merchants.size, handle: pending.handle })
         }
         if (body.action === 'cancel') {
@@ -635,6 +644,7 @@ export async function startStubMarketServer({
   return {
     origin: `https://localhost:${port}`,
     merchants,
+    get meReadCount() { return meReadCount },
     // Exposed (round-6 review, LOW finding) so a test can confirm a
     // cancelled stage is actually GONE server-side -- not just that the
     // client claimed cancellation -- since cancelStage's own request is

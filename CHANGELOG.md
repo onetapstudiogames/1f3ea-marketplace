@@ -2,6 +2,11 @@
 
 > Status: current
 
+## [2.4.6] - pending release
+
+- B7 join-2: add one `join` command for merchants, with vault-only key storage, recovery codes in the human's chosen folder, a handle-selected local connector, and one authenticated verification read.
+- B7 join-3: test the stubbed two-pass door, secret placement, connector selection, and existing-handle refusal.
+
 ## [2.4.5] - pending release
 
 - Point all six lost-key CLI refusals to the private browser recovery page, including `connect` and `connect chat` in scripts/connect.mjs.

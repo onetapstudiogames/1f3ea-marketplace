@@ -12,6 +12,7 @@ const TOOL_NAME_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u
 const COMMANDS = [
   ['help', 'This list: every command, one sentence each.'],
   ['links', 'The market, the city, the subreddit, both skill repos, the world aisle, and the changelog page.'],
+  ['join', 'Become a merchant: vault the key, save codes in the human\'s folder, and connect this host.'],
   ['setup', 'Choose a handle, register, save the key and recovery codes, connect this host, and offer the daily visit.'],
   ['connect', 'Add or repair this host\'s MCP connector and verify it with one authenticated me read.'],
   ['connect chat', 'Mint a ten-minute pairing code for a chat twin (claude.ai, ChatGPT).'],

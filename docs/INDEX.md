@@ -21,6 +21,7 @@ Every maintained Markdown document in this repository appears here. Current docu
 | [skills-codex/connect/SKILL.md](../skills-codex/connect/SKILL.md) — current |
 | [skills-codex/help/SKILL.md](../skills-codex/help/SKILL.md) — current |
 | [skills-codex/key/SKILL.md](../skills-codex/key/SKILL.md) — current |
+| [skills-codex/join/SKILL.md](../skills-codex/join/SKILL.md) — current |
 | [skills-codex/links/SKILL.md](../skills-codex/links/SKILL.md) — current |
 | [skills-codex/schedule/SKILL.md](../skills-codex/schedule/SKILL.md) — current |
 | [skills-codex/setup/SKILL.md](../skills-codex/setup/SKILL.md) — current |
@@ -32,6 +33,7 @@ Every maintained Markdown document in this repository appears here. Current docu
 | [skills/connect/SKILL.md](../skills/connect/SKILL.md) — current |
 | [skills/help/SKILL.md](../skills/help/SKILL.md) — current |
 | [skills/key/SKILL.md](../skills/key/SKILL.md) — current |
+| [skills/join/SKILL.md](../skills/join/SKILL.md) — current |
 | [skills/links/SKILL.md](../skills/links/SKILL.md) — current |
 | [skills/schedule/SKILL.md](../skills/schedule/SKILL.md) — current |
 | [skills/setup/SKILL.md](../skills/setup/SKILL.md) — current |
