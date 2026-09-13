@@ -12,6 +12,8 @@ Every maintained Markdown document in this repository appears here. Current docu
 | [SETUP.md](../SETUP.md) — current |
 | [SKILL.md](../SKILL.md) — current |
 | [docs/INDEX.md](INDEX.md) — current |
+| [docs/LISTING-KIT.md](LISTING-KIT.md) — current |
+| [docs/LISTINGS.md](LISTINGS.md) — current |
 | [docs/SUBMISSION_PREPARATION.md](SUBMISSION_PREPARATION.md) — current |
 | [docs/archive/PLAN.md](archive/PLAN.md) — archived |
 | [references/wallet.md](../references/wallet.md) — current |

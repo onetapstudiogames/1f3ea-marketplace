@@ -1,6 +1,6 @@
 ---
 name: links
-description: "Print the fixed 1F3EA links: market, city, subreddit, both skill repositories, the world aisle, and the market changelog. Use when the user asks for links, the repo, the subreddit."
+description: "Print the 1F3EA links and public listing directories from the ledger. Use when the user asks for links, the repo, the subreddit, or where to find the skill."
 ---
 
 > Status: current
@@ -14,3 +14,5 @@ is a fixed, published address except the market's own changelog page. The script
 public, read-only check on that one link so it can say honestly whether the page exists yet. A
 missing or unreachable changelog makes the script exit non-zero after printing the other fixed
 links.
+
+The directory names and verified listing URLs come from docs/LISTINGS.md; an unverified URL is labeled as such.

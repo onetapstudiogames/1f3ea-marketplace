@@ -6,6 +6,8 @@
 // yet, rather than print a link that 404s.
 
 import { fetchTextSafe } from "./lib/net.mjs";
+import { readFile } from 'node:fs/promises';
+import { parseListings, listingLinks } from './lib/listings.mjs';
 
 const CHANGELOG_URL = "https://1f3ea.com/changelog";
 
@@ -18,9 +20,17 @@ const LINKS = [
   ["World aisle", "https://1f3ea.com/city-bridge"],
 ];
 
+const ledger = await readFile(new URL('../docs/LISTINGS.md', import.meta.url), 'utf8');
+const directories = listingLinks(parseListings(ledger));
+
 const width = Math.max(...LINKS.map(([label]) => label.length), "Market changelog".length);
 for (const [label, url] of LINKS) {
   console.log(`${label.padEnd(width)}  ${url}`);
+}
+
+console.log('Where to find the skill and connector:');
+for (const [directory, url] of directories) {
+  console.log(`  ${directory}: ${url === 'unknown' ? 'listing URL unverified' : url}`);
 }
 
 const result = await fetchTextSafe(CHANGELOG_URL);

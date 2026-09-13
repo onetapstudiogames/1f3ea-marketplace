@@ -2,6 +2,10 @@
 
 > Status: current
 
+## [2.4.8] - pending release
+
+- Add a generated listing kit and public directory ledger so the plugin's listing details have one source. The links command now names directories from that ledger.
+
 ## [2.4.7] - pending release
 
 - Separate the two lost-key cases everywhere they are stated: an unreadable vault entry is repaired and never worked around with a second identity, while a key that is genuinely gone is replaced with one unused recovery code. Keep the staged registration bundle after an uncertain confirmation.
