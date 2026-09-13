@@ -211,8 +211,8 @@ async function main() {
       console.error(
         `${label}: ${error.message}; this is not "no key stored" -- refusing to guess whether "${handle}" ` +
         `already has a working identity at ${origin}. Repair or remove that unreadable vault entry first. ` +
-        'Then, if you have a saved recovery code for this handle, run `key recover begin`, and ' +
-        're-run setup. Never create a second identity to work around an unreadable one.',
+        'If you have a saved recovery code for this handle, the human uses https://1f3ea.com/recovery. ' +
+        'Then re-run setup. Never create a second identity to work around an unreadable one.',
       )
       process.exitCode = 1
       throw new SetupRefusal()

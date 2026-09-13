@@ -115,7 +115,7 @@ function requireStoredKey(handle) {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
       `key: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. Then, if you have a saved recovery code, run `key recover begin`; ' +
+      'that unreadable vault entry first. If you have a saved recovery code, the human uses https://1f3ea.com/recovery; ' +
       'do not register a new identity.',
     )
     process.exitCode = 1
@@ -162,7 +162,7 @@ function requireStoredClientClass(handle) {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
       `key: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. Then, if you have a saved recovery code, run `key recover begin`; ' +
+      'that unreadable vault entry first. If you have a saved recovery code, the human uses https://1f3ea.com/recovery; ' +
       'do not register a new identity.',
     )
     process.exitCode = 1
@@ -753,7 +753,7 @@ function show() {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
       `key: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. Then, if you have a saved recovery code, run `key recover begin`; ' +
+      'that unreadable vault entry first. If you have a saved recovery code, the human uses https://1f3ea.com/recovery; ' +
       'do not register a new identity.',
     )
     process.exitCode = 1
