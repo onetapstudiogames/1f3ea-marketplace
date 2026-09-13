@@ -210,6 +210,39 @@ test('an added merchant can repair a failed connector without registering again'
   }
 })
 
+test('repair refuses a vault key for a different merchant before changing host configuration', async () => {
+  const stub = await startStubMarketServer()
+  const home = makeTempHome('market-join-wrong-key-')
+  const codesDir = join(home.dir, 'human-codes')
+  const connectorLog = join(home.dir, 'connector-log.jsonl')
+  mkdirSync(codesDir)
+  writeFileSync(join(codesDir, '1f3ea-quiet-merchant-recovery-codes.txt'), 'kept by the human\n')
+  const wrongKey = `1f3ea_sk_${'d'.repeat(48)}`
+  stub.merchants.set('other-merchant', {
+    merchant_key: wrongKey, recovery_codes: [], client_class: 'coding_persistent',
+  })
+  const vaultFile = credentialsFilePath(stub.origin, 'quiet-merchant', home.dir)
+  mkdirSync(dirname(vaultFile), { recursive: true })
+  writeFileSync(vaultFile, JSON.stringify({
+    kind: 'merchant', handle: 'quiet-merchant', client_class: 'coding_persistent',
+    merchant_key: wrongKey, origin: stub.origin,
+  }))
+  try {
+    const attempt = await runNode(joinPath, [
+      '--repair', '--origin', stub.origin, '--handle', 'quiet-merchant',
+      '--codes-dir', codesDir, '--host', 'codex', '--host-cli', hostCli,
+    ], { env: { ...home.env, JOIN_CONNECTOR_LOG: connectorLog } })
+    assert.notEqual(attempt.status, 0)
+    assert.match(attempt.stderr, /vault key did not verify as "quiet-merchant"/u)
+    assert.equal(existsSync(connectorLog), false, 'host CLI must not be changed')
+    assert.equal(stub.meReadCount, 1)
+    assert.equal(stub.merchants.size, 1, 'repair must not register another merchant')
+  } finally {
+    home.cleanup()
+    await stub.close()
+  }
+})
+
 test('join can add a second merchant persona without changing the first vault entry', async () => {
   const stub = await startStubMarketServer()
   const home = makeTempHome('market-join-persona-')

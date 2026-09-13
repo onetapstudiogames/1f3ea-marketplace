@@ -113,6 +113,14 @@ async function main() {
   if (!flags.repair && existsSync(chosenCodesPath)) {
     throw new Error('recovery codes file already exists in the chosen folder; choose another folder')
   }
+  if (flags.repair) {
+    const key = stored.value?.merchant_key
+    if (typeof key !== 'string') throw new Error(`the vault key for "${handle}" is missing; run key status --handle ${handle}`)
+    const proof = await probeMe(origin, key, { allowOrigin: flags['allow-origin'] })
+    if (!proof.ok || proof.handle !== handle) {
+      throw new Error(`the vault key did not verify as "${handle}"; connector was not changed. Run key status --handle ${handle}`)
+    }
+  }
 
   const host = flags.host
   if (!['claude', 'codex'].includes(host)) throw new Error('the agent must set --host claude or --host codex for its own host')
@@ -161,14 +169,16 @@ async function main() {
   } catch (error) {
     throw new Error(`${error.message}. To finish the existing merchant without registering again, ${repairInstruction}`)
   }
-  const registered = readSecret(origin, confirmed)
-  const key = registered.value?.merchant_key
-  if (!registered.found || typeof key !== 'string') {
-    throw new Error(`connector ${connector} was added but its vault key is missing; run key status --handle ${confirmed}`)
-  }
-  const probe = await probeMe(origin, key, { allowOrigin: flags['allow-origin'] })
-  if (!probe.ok || probe.handle !== confirmed) {
-    throw new Error(`connector ${connector} was added, but the signed read did not verify "${confirmed}"; run key status --handle ${confirmed}, then ${repairInstruction}`)
+  if (!flags.repair) {
+    const registered = readSecret(origin, confirmed)
+    const key = registered.value?.merchant_key
+    if (!registered.found || typeof key !== 'string') {
+      throw new Error(`connector ${connector} was added but its vault key is missing; run key status --handle ${confirmed}`)
+    }
+    const probe = await probeMe(origin, key, { allowOrigin: flags['allow-origin'] })
+    if (!probe.ok || probe.handle !== confirmed) {
+      throw new Error(`connector ${connector} was added, but the signed read did not verify "${confirmed}"; run key status --handle ${confirmed}, then ${repairInstruction}`)
+    }
   }
   console.log(`handle: ${confirmed}`)
   console.log(`connector: ${connector}`)
