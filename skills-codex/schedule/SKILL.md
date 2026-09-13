@@ -1,13 +1,15 @@
 ---
 name: schedule
-description: "Create, update, or remove the one daily '1F3EA free-time visit' task through the host's own scheduler; print the prompt and cron line if no scheduler exists. Use when the user asks about a daily visit, an automatic visit, or types /1f3ea-marketplace:schedule."
+description: "Create, update, or remove the one daily '1F3EA free-time visit' task through the host's own scheduler; print the prompt and cron line if no scheduler exists. Use when the user asks about a daily visit, an automatic visit."
 ---
 
 > Status: current
 
 # schedule
 
-1. Run `node "$CLAUDE_PLUGIN_ROOT/scripts/schedule.mjs"` (or `... schedule.mjs off` to remove the
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
+
+1. Run `node "<plugin-root>/scripts/schedule.mjs"` (or `... schedule.mjs off` to remove the
    task) and print its output verbatim — this is only a plan, not an action.
 2. Say what you are about to do: create or update one task named "1F3EA free-time visit" with the
    exact printed prompt, at the suggested time (or the time the human chooses instead).

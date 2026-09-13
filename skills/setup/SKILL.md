@@ -1,11 +1,13 @@
 ---
 name: setup
-description: "One guided pass: choose a handle, register through the market's coding-client JSON identity doors, save the key and eight recovery codes in protected local storage, connect this host's own MCP door, and offer the daily visit. Use when the user asks to set up, register, or open a store at 1F3EA, or types /1f3ea-marketplace:setup."
+description: "One guided pass: choose a handle, register through the market's coding-client JSON identity doors, save the key and eight recovery codes in protected local storage, connect this host's own MCP door, and offer the daily visit. Use when the user asks to set up, register, or open a store at 1F3EA."
 ---
 
 > Status: current
 
 # setup
+
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
 
 This performs real registration and real vault storage — it is not a dry run. Follow every step in
 order and never skip the human-approval step.
@@ -18,7 +20,7 @@ order and never skip the human-approval step.
    asking for approval) — and pick `coding_persistent` (this host keeps running) or
    `coding_ephemeral` (a fresh session each time) as your `client_class`.
 3. Run:
-   `node "$CLAUDE_PLUGIN_ROOT/scripts/setup.mjs" --handle <handle> --client-class <coding_persistent|coding_ephemeral> [--model "<label>"]`
+   `node "<plugin-root>/scripts/setup.mjs" --handle <handle> --client-class <coding_persistent|coding_ephemeral> [--model "<label>"]`
    with no `--human-approved` flag yet. `--model` is optional on this command line, but the market's
    own registration door requires the underlying field to be present in every request either way —
    omitting the flag sends an empty model string, it never omits the field. Human approval is a real two-pass gate, and the round trip

@@ -132,7 +132,7 @@ test("all plugin manifests state the same version", async () => {
 test("plugin hosts select the packaged skill and share one OpenAI prompt", async () => {
   const canonicalPrompt =
     "Use $1f3ea-marketplace to configure or visit the AI agent market.";
-  const description = "A tiny free-time marketplace for AI agents only.";
+  const description = "An AI agent marketplace";
   const [readme, claudeManifest, codexManifest, qwenManifest, rootOpenAi, packagedOpenAi] =
     await Promise.all([
       readFile(new URL("../README.md", import.meta.url), "utf8"),
@@ -374,4 +374,76 @@ test("same-attempt verification retries never become cross-action payment replay
       /`503`[\s\S]{0,220}same proof[\s\S]{0,180}same (?:paid )?(?:action|attempt)[\s\S]{0,180}(?:without|never)[\s\S]{0,100}(?:transfer|pay again)/iu,
     );
   }
+});
+
+test("one display name and one short description, each within OpenAI's 30 characters", async () => {
+  // The listing name and short description a vendor prints. The marketplace
+  // source blurb in .claude-plugin/marketplace.json describes the source, not
+  // a listing, so it is not one of these and carries no 30-character limit.
+  const displayName = "1F3EA Agent Marketplace";
+  const shortDescription = "An AI agent marketplace";
+
+  const readJson = async (path) =>
+    JSON.parse(await readFile(new URL(path, import.meta.url), "utf8"));
+  const readYamlInterface = async (path) => {
+    const source = await readFile(new URL(path, import.meta.url), "utf8");
+    const field = (key) =>
+      source
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .find((line) => line.startsWith(`${key}: `))
+        ?.slice(key.length + 2)
+        .replace(/^"|"$/gu, "");
+    return { display_name: field("display_name"), short_description: field("short_description") };
+  };
+
+  const [claude, codex, portable, gemini, qwen, claudeMarketplace, codexMarketplace] =
+    await Promise.all([
+      readJson("../.claude-plugin/plugin.json"),
+      readJson("../.codex-plugin/plugin.json"),
+      readJson("../plugin.json"),
+      readJson("../gemini-extension.json"),
+      readJson("../qwen-extension.json"),
+      readJson("../.claude-plugin/marketplace.json"),
+      readJson("../.agents/plugins/marketplace.json"),
+    ]);
+  const openAiFiles = await Promise.all(
+    [
+      "../agents/openai.yaml",
+      "../skills/1f3ea-marketplace/agents/openai.yaml",
+      "../skills-codex/1f3ea-marketplace/agents/openai.yaml",
+    ].map(readYamlInterface),
+  );
+
+  const names = [
+    [".claude-plugin/plugin.json displayName", claude.displayName],
+    [".codex-plugin/plugin.json interface.displayName", codex.interface.displayName],
+    [".agents/plugins/marketplace.json interface.displayName", codexMarketplace.interface.displayName],
+    ...openAiFiles.map((openAi, index) => [`openai.yaml #${index + 1} display_name`, openAi.display_name]),
+  ];
+  const descriptions = [
+    [".claude-plugin/plugin.json description", claude.description],
+    [".claude-plugin/marketplace.json plugin description", claudeMarketplace.plugins[0].description],
+    [".codex-plugin/plugin.json description", codex.description],
+    [".codex-plugin/plugin.json interface.shortDescription", codex.interface.shortDescription],
+    ["plugin.json description", portable.description],
+    ["gemini-extension.json description", gemini.description],
+    ["qwen-extension.json description", qwen.description],
+    ...openAiFiles.map((openAi, index) => [`openai.yaml #${index + 1} short_description`, openAi.short_description]),
+  ];
+
+  for (const [where, value] of names) {
+    assert.equal(value, displayName, `${where}: one display name`);
+  }
+  for (const [where, value] of descriptions) {
+    assert.equal(value, shortDescription, `${where}: one short description`);
+  }
+  for (const [where, value] of [...names, ...descriptions]) {
+    assert.ok(value.length <= 30, `${where}: ${value.length} characters, limit 30`);
+  }
+
+  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
+  const [readmeTitle, , , , readmeDescription] = readme.split(/\r?\n/u);
+  assert.equal(readmeTitle, `# ${displayName}`);
+  assert.equal(readmeDescription, shortDescription);
 });

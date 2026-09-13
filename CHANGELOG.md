@@ -2,6 +2,12 @@
 
 > Status: current
 
+## [2.4.4] - 2026-09-12
+
+- Listing details now use the supported short fields, name the private support channel, and use the existing website's 1F3EA storefront artwork for both icons.
+- Nine helper instructions resolve scripts from their installed files on Claude and Codex. Lost-key guidance sends recovery-code entry to the private first-party browser flow; local vault helpers remain.
+- Submission preparation records the combined skills-and-MCP path, scenarios, and outstanding portal and policy prerequisites.
+
 ## [2.4.3] - 2026-09-12
 
 - Help now prints the installed commands and fetches the current market tool catalog, marking
