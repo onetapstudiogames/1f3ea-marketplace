@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict'
-import { readFile } from 'node:fs/promises'
+import { cp, mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises'
 import { spawnSync } from 'node:child_process'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import test from 'node:test'
 
 const root = new URL('..', import.meta.url)
@@ -57,4 +59,35 @@ test('metadata names the current manifest and carries verified image facts', asy
   assert.equal(metadata.images.icon.bytes, 23863)
   assert.match(metadata.images.icon.sha256, /^[a-f0-9]{64}$/u)
   assert.equal(metadata.links.connector, 'https://1f3ea.com/mcp/connect')
+})
+
+test('generator check catches stale output and conflicting manifest facts', async () => {
+  const fixture = await mkdtemp(join(tmpdir(), 'market-listing-kit-'))
+  const paths = [
+    'scripts/generate-listing-kit.mjs', 'scripts/lib/listings.mjs',
+    '.codex-plugin/plugin.json', '.claude-plugin/plugin.json', '.mcp.json',
+    'README.md', 'CHANGELOG.md', 'docs/LISTINGS.md',
+    'docs/LISTING-KIT.md', 'docs/listing-metadata.json',
+    'assets/1f3ea-storefront.png',
+  ]
+  try {
+    for (const path of paths) {
+      const destination = join(fixture, path)
+      await mkdir(dirname(destination), { recursive: true })
+      await cp(new URL(path, root), destination)
+    }
+    const run = () => spawnSync(process.execPath, ['scripts/generate-listing-kit.mjs', '--check'], {
+      cwd: fixture, encoding: 'utf8',
+    })
+    assert.equal(run().status, 0)
+    await writeFile(join(fixture, 'docs/LISTING-KIT.md'), 'stale')
+    assert.match(run().stderr, /LISTING-KIT\.md is stale/u)
+
+    const codexPath = join(fixture, '.codex-plugin/plugin.json')
+    const manifest = JSON.parse(await readFile(codexPath, 'utf8'))
+    await writeFile(codexPath, JSON.stringify({ ...manifest, version: '0.0.0' }))
+    assert.match(run().stderr, /manifests disagree/u)
+  } finally {
+    await rm(fixture, { recursive: true, force: true })
+  }
 })
