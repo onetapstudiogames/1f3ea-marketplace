@@ -7,7 +7,7 @@ description: "Check whether the market's public changelog page (https://1f3ea.co
 
 # changelog
 
-Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
 
 This is the market's own changelog, not this skill's — for what changed in this skill, use
 `update` instead.

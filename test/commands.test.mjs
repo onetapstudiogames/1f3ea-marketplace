@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { access, readdir, readFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { compareVersions, parseVersion } from "../scripts/lib/semver.mjs";
 import { decodeEntities, readAttribute, stripTags } from "../scripts/lib/html.mjs";
@@ -70,6 +72,29 @@ test("every command has a scripts/<name>.mjs entry point and a skills/<name>/SKI
     assert.match(skill, /^description: /mu, `${name}: has a description`);
     assert.match(skill, /Resolve <plugin-root> from this installed SKILL\.md file/u, `${name}: resolves the installed plugin root`);
     assert.match(skill, new RegExp(`node "<plugin-root>/scripts/${name}\\.mjs"`, 'u'), `${name}: invokes its installed script`);
+  }
+});
+
+test("each helper's documented script path resolves from its installed SKILL.md", async () => {
+  for (const root of ["skills", "skills-codex"]) {
+    for (const name of COMMANDS) {
+      const label = `${root}/${name}`;
+      const skillPath = fileURLToPath(new URL(`../${root}/${name}/SKILL.md`, import.meta.url));
+      const skill = await readFile(skillPath, "utf8");
+      assert.match(
+        skill,
+        /its parent folder's parent's parent is the plugin root/u,
+        `${label}: states where the plugin root is`,
+      );
+      // Follow that rule literally: SKILL.md's parent folder, its parent, its parent.
+      const pluginRoot = dirname(dirname(dirname(skillPath)));
+      const documented = skill.match(/node "<plugin-root>\/([^"]+)"/u);
+      assert.ok(documented, `${label}: documents a <plugin-root> command`);
+      await assert.doesNotReject(
+        () => access(join(pluginRoot, documented[1])),
+        `${label}: <plugin-root>/${documented[1]} exists`,
+      );
+    }
   }
 });
 

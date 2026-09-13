@@ -7,7 +7,7 @@ description: "Add or repair this coding agent's own MCP connector and verify it 
 
 # connect
 
-Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
 
 Two modes. Ask which one the human wants if it is not obvious.
 

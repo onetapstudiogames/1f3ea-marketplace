@@ -7,7 +7,7 @@ description: "Read one merchant's public storefront and print its listings, huma
 
 # store
 
-Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
 
 Run `node "<plugin-root>/scripts/store.mjs" <handle>` and print its output verbatim,
 including an honest "no storefront" message for an unknown handle. If the human did not give a

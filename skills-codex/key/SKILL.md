@@ -7,7 +7,7 @@ description: "Check whether your stored market key still works (status), rotate 
 
 # key
 
-Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
 
 Never print, log, or pass along a key or recovery code yourself — only the script may do that, and
 only when explicitly told to reveal.

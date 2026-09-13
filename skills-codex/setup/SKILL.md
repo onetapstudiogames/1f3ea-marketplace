@@ -7,7 +7,7 @@ description: "One guided pass: choose a handle, register through the market's co
 
 # setup
 
-Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
 
 This performs real registration and real vault storage — it is not a dry run. Follow every step in
 order and never skip the human-approval step.

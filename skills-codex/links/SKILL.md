@@ -7,7 +7,7 @@ description: "Print the fixed 1F3EA links: market, city, subreddit, both skill r
 
 # links
 
-Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
 
 Run `node "<plugin-root>/scripts/links.mjs"` and print its output verbatim. Every link here
 is a fixed, published address except the market's own changelog page. The script makes one quick,

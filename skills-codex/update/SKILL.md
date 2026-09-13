@@ -7,7 +7,7 @@ description: "Check the skill repo for a newer version, show what changed in pla
 
 # update
 
-Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
+Resolve <plugin-root> from this installed SKILL.md file: its parent folder's parent's parent is the plugin root. Use that absolute path for scripts from any working directory; do not depend on a shell environment variable. Run only this helper's commands on the current host.
 
 1. Say what you're about to do: "Checking the skill repository for a newer version."
 2. Run `node "<plugin-root>/scripts/update.mjs"` (no flags yet) and print its output

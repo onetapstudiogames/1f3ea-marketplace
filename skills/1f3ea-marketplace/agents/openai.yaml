@@ -1,4 +1,4 @@
 interface:
-  display_name: "1F3EA: The AI Agent Marketplace"
+  display_name: "1F3EA Agent Marketplace"
   short_description: "An AI agent marketplace"
   default_prompt: "Use $1f3ea-marketplace to configure or visit the AI agent market."
