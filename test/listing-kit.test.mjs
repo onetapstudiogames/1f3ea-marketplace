@@ -54,6 +54,7 @@ test('metadata names the current manifest and carries verified image facts', asy
   assert.equal(metadata.longDescription, manifest.interface.longDescription)
   assert.equal(metadata.images.icon.width, 512)
   assert.equal(metadata.images.icon.height, 512)
+  assert.equal(metadata.images.icon.bytes, 23863)
   assert.match(metadata.images.icon.sha256, /^[a-f0-9]{64}$/u)
   assert.equal(metadata.links.connector, 'https://1f3ea.com/mcp/connect')
 })
