@@ -4,7 +4,7 @@
 
 ## [2.4.5] - pending release
 
-- Point four lost-key CLI refusals to the private browser recovery page.
+- Point all six lost-key CLI refusals to the private browser recovery page, including `connect` and `connect chat` in scripts/connect.mjs.
 
 ## [2.4.4] - 2026-09-12
 
