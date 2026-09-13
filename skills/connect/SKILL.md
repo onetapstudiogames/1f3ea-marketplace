@@ -14,6 +14,8 @@ Two modes. Ask which one the human wants if it is not obvious.
 [SETUP.md](../../SETUP.md) explains why the market uses a host-specific add command while the city
 can bundle a local vault-reading bridge.
 
+If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; only if no unused code remains is a new identity the way forward.
+
 ## Connect this host itself
 
 1. Run `node "<plugin-root>/scripts/connect.mjs" [--handle <handle>]` and print its output

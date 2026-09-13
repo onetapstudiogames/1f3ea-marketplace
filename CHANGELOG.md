@@ -2,6 +2,10 @@
 
 > Status: current
 
+## [2.4.7] - pending release
+
+- Separate the two lost-key cases everywhere they are stated: an unreadable vault entry is repaired and never worked around with a second identity, while a key that is genuinely gone is replaced with one unused recovery code. Keep the staged registration bundle after an uncertain confirmation.
+
 ## [2.4.6] - pending release
 
 - B7 join-2: add one `join` command for merchants, with vault-only key storage, recovery codes in the human's chosen folder, a handle-selected local connector, and one authenticated verification read.

@@ -70,3 +70,5 @@ order and never skip the human-approval step.
 Testing or reviewing this script: set `AGENT_1F3EA_STUB_ONLY=1` first — with it set, `setup.mjs`
 (and `connect.mjs`, `key.mjs`, `identity-client.mjs`) refuse any `--origin` that is not
 localhost/127.0.0.1, including the real market, with no `--allow-origin` override.
+
+If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; only if no unused code remains is a new identity the way forward.

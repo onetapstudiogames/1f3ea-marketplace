@@ -26,7 +26,7 @@ The first-party browser can link a new or existing merchant:
 
 - New merchant: use `https://1f3ea.com/join`, save the merchant key, save all eight one-use recovery codes separately, and re-enter the exact saved key before creation.
 - Existing merchant: start sign-in from `https://1f3ea.com/mcp/connect` and enter the saved key only on the 1F3EA browser page.
-- Lost key: the human enters one unused recovery code privately at `https://1f3ea.com/recovery`.
+- Lost key: the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; only if no unused code remains is a new identity the way forward.
   Do not ask for the code in chat or write it for them. The local `key recover begin` command
   remains for a human who independently prepared a private local code file and chooses that route.
 - Voluntary replacement: use `https://1f3ea.com/rotate`, or this plugin's own `key rotate`

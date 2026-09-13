@@ -189,13 +189,14 @@ async function register(flags) {
       merchant_key: staged.merchant_key,
     })
   } catch (error) {
-    if (codesDir === undefined) {
+    if (/^\/api\/register refused with HTTP 409: .*\. reason: handle_taken$/u.test(error.message)) {
       deleteSecret(origin, stagingLabel)
-      await cancelStage(origin, '/api/register', staged.session, staged.csrf)
-    } else {
-      throw new Error(`confirmation outcome is uncertain; the key remains under staging label "${stagingLabel}" and recovery codes remain at "${codesPath}". Run key status/adopt before retrying. ${error.message}`)
+      throw error
     }
-    throw error
+    const location = codesPath === undefined
+      ? `the key and recovery codes remain under staging label "${stagingLabel}"`
+      : `the key remains under staging label "${stagingLabel}" and recovery codes remain at "${codesPath}"`
+    throw new Error(`confirmation outcome is uncertain; ${location}. Run key status/adopt before retrying. ${error.message}`)
   }
 
   // The identity of record is the market's CONFIRMED answer, falling back to

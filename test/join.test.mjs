@@ -176,6 +176,31 @@ test('lost confirm response keeps the staged key and chosen codes file for recov
   }
 })
 
+test('lost confirm response without a codes folder keeps the complete staged bundle', async () => {
+  const stub = await startStubMarketServer({ registerConfirmDropResponse: true })
+  const home = makeTempHome('market-register-uncertain-vault-')
+  try {
+    const result = await runNode(identityClient, [
+      'register', '--origin', stub.origin, '--handle', 'quiet-merchant',
+      '--client-class', 'coding_persistent', '--human-approved',
+    ], { env: home.env })
+    assert.notEqual(result.status, 0)
+    assert.match(result.stderr, /confirmation outcome is uncertain/u)
+    assert.match(result.stderr, /key status\/adopt/u)
+    assert.equal(stub.merchants.size, 1)
+    const vaultDir = join(home.dir, '.1f3ea', 'credentials')
+    const staged = readdirSync(vaultDir).find(name => name.includes('quiet-merchant--pending-registration-'))
+    assert.ok(staged, 'confirmed registration retains the staged vault entry')
+    const bundle = JSON.parse(readFileSync(join(vaultDir, staged), 'utf8'))
+    assert.equal(bundle.merchant_key, stub.merchants.get('quiet-merchant').merchant_key)
+    assert.deepEqual(bundle.recovery_codes, stub.merchants.get('quiet-merchant').recovery_codes)
+    assert.doesNotMatch(result.stdout + result.stderr, /1f3ea_(?:sk|rc)_[0-9a-f]+/u)
+  } finally {
+    home.cleanup()
+    await stub.close()
+  }
+})
+
 test('an added merchant can repair a failed connector without registering again', async () => {
   const stub = await startStubMarketServer()
   const home = makeTempHome('market-join-repair-')

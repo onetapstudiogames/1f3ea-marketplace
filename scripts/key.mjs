@@ -26,6 +26,7 @@ import {
   readSecret, SecretReadFailure, HANDLE_RE, promoteReplacementKey,
 } from './identity-client.mjs'
 import { assertAllowedOrigin } from './lib/origin-guard.mjs'
+import { LOST_KEY_GUIDANCE, UNREADABLE_ENTRY_GUIDANCE } from './lib/recovery-guidance.mjs'
 
 function parseArgs(argv) {
   const flags = {}
@@ -114,9 +115,8 @@ function requireStoredKey(handle) {
   } catch (error) {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
-      `key: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. If you have a saved recovery code, the human uses https://1f3ea.com/recovery; ' +
-      'do not register a new identity.',
+      `key: ${error.message}; this is not "no key stored" -- refusing to guess. ` +
+      UNREADABLE_ENTRY_GUIDANCE,
     )
     process.exitCode = 1
     return null
@@ -132,12 +132,12 @@ function requireStoredKey(handle) {
   if (!stored.found) {
     console.error(`key: no vault entry found for "${handle}" at ${origin}.`)
     console.error('stored key: no vault entry.')
-    console.error('next: Run setup, or run `key status --handle <the handle you meant>`.')
+    console.error(`next: Run setup, or run \`key status --handle <the handle you meant>\`. ${LOST_KEY_GUIDANCE}`)
     process.exitCode = 1
     return null
   }
   if (typeof stored.value?.merchant_key !== 'string') {
-    console.error(`key: a vault entry exists for "${handle}" at ${origin}, but it carries no merchant_key field.`)
+    console.error(`key: a vault entry exists for "${handle}" at ${origin}, but it carries no merchant_key field. ${LOST_KEY_GUIDANCE}`)
     process.exitCode = 1
     return null
   }
@@ -161,9 +161,8 @@ function requireStoredClientClass(handle) {
   } catch (error) {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
-      `key: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. If you have a saved recovery code, the human uses https://1f3ea.com/recovery; ' +
-      'do not register a new identity.',
+      `key: ${error.message}; this is not "no key stored" -- refusing to guess. ` +
+      UNREADABLE_ENTRY_GUIDANCE,
     )
     process.exitCode = 1
     return null
@@ -752,21 +751,20 @@ function show() {
   } catch (error) {
     if (!(error instanceof SecretReadFailure)) throw error
     console.error(
-      `key: ${error.message}; this is not "no key stored" -- refusing to guess. Repair or remove ` +
-      'that unreadable vault entry first. If you have a saved recovery code, the human uses https://1f3ea.com/recovery; ' +
-      'do not register a new identity.',
+      `key: ${error.message}; this is not "no key stored" -- refusing to guess. ` +
+      UNREADABLE_ENTRY_GUIDANCE,
     )
     process.exitCode = 1
     return
   }
   if (!stored.found) {
-    console.log(`no vault entry found for "${handle}" at ${origin}.`)
+    console.log(`no vault entry found for "${handle}" at ${origin}. ${LOST_KEY_GUIDANCE}`)
     return
   }
   if (typeof stored.value?.merchant_key !== 'string') {
     console.log(
       `a vault entry exists for "${handle}" at ${origin}, but it carries no merchant_key field -- there ` +
-      'is nothing to show.',
+      `is nothing to show. ${LOST_KEY_GUIDANCE}`,
     )
     return
   }
