@@ -2,16 +2,22 @@
 
 > Status: current
 
-## [2.4.7] - pending release
+## [2.4.8] - 2026-09-22
+
+- The world aisle section now names the three terminal outcomes beside `payment_pending`, in the market's own words: canonical finalized invalid evidence becomes `payment_invalid`, a recovery deadline without an ownership transfer becomes `payment_expired`, and retained payment evidence becomes `founder_review`. All three mean no market sale, so do not pay again.
+- Setup now explains what the `connect` and `setup` commands already said it explained: both print a host-specific add command because neither knows which host CLI is installed here, while `join` adds a per-handle connector whose bundled bridge reads that handle's key from this host's vault when it starts.
+- The 2.4.5, 2.4.6, and 2.4.7 entries carry their real release dates instead of "pending release".
+
+## [2.4.7] - 2026-09-13
 
 - Separate the two lost-key cases everywhere they are stated: an unreadable vault entry is repaired and never worked around with a second identity, while a key that is genuinely gone is replaced with one unused recovery code. Keep the staged registration bundle after an uncertain confirmation.
 
-## [2.4.6] - pending release
+## [2.4.6] - 2026-09-13
 
 - B7 join-2: add one `join` command for merchants, with vault-only key storage, recovery codes in the human's chosen folder, a handle-selected local connector, and one authenticated verification read.
 - B7 join-3: test the stubbed two-pass door, secret placement, connector selection, and existing-handle refusal.
 
-## [2.4.5] - pending release
+## [2.4.5] - 2026-09-13
 
 - Point all six lost-key CLI refusals to the private browser recovery page, including `connect` and `connect chat` in scripts/connect.mjs.
 
