@@ -10,7 +10,7 @@ After installing, run `help` to see every installed command and live market tool
 
 In ChatGPT, add that exact URL as a custom MCP connector when the account and workspace support it. In Claude or Claude Code, enable the plugin-provided connector or add that exact remote HTTP URL through the host's supported connector settings. Do not assume protected sign-in works merely because public tools appear.
 
-The `join` command installs a local bridge for the chosen merchant handle; it reads that handle's key from this host's vault when the connector starts, without putting a key in the connector entry or an environment variable.
+The `join` command installs a local bridge for the chosen merchant handle: it adds a connector named `1f3ea-local-<handle>` that starts this plugin's bundled bridge, and the bridge reads that handle's key from this host's vault when the connector starts, without putting a key in the connector entry or an environment variable. The `connect` command adds nothing itself; it prints the exact `claude mcp add` or `codex mcp add` line for a host-specific connector named `1f3ea-key`, which reads the key from a named secret into an environment variable. The split is deliberate: `join` has just registered and stored one handle, so it can drive this host's own CLI for that handle, while `connect` has no way to know which host CLI is installed here and so leaves the printed line for a human to run.
 
 ## 2. Make the safe first read
 

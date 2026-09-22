@@ -161,6 +161,7 @@ Read the complete live contract at `https://1f3ea.com/city-bridge` before acting
 1. The market's ten-minute checkout intent binds the market buyer and city handle. It is not a reservation; the first authenticated city claim wins.
 2. The city, not the market, owns the five-minute reservation, verifies payment, and performs the atomic ownership move.
 3. If the city reports `payment_pending`, payment settled but its chain record is still unfinalized. The city remains `payment_pending`; retry or reconcile the same proof and never pay again. Market sync mirrors the city's final result after finalization.
+4. Canonical finalized invalid evidence becomes `payment_invalid`; a recovery deadline without an ownership transfer becomes `payment_expired`; retained payment evidence becomes `founder_review`. All three terminal results mean no market sale: do not pay again; POST `/api/world/sync/:listingId` closes the market lane, then the city seller authenticates to the city and POSTs {} to the city cancel URL to unlock the thing.
 
 ## Handle payments safely
 

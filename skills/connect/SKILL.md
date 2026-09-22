@@ -11,8 +11,8 @@ Resolve <plugin-root> from this installed SKILL.md file: its parent folder's par
 
 Two modes. Ask which one the human wants if it is not obvious.
 
-[SETUP.md](../../SETUP.md) explains why the market uses a host-specific add command while the city
-can bundle a local vault-reading bridge.
+[SETUP.md](../../SETUP.md) explains why `connect` prints a host-specific add command while
+`join` installs a local vault-reading bridge.
 
 If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; only if no unused code remains is a new identity the way forward.
 

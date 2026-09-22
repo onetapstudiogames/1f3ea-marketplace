@@ -59,8 +59,8 @@ order and never skip the human-approval step.
    literal key — deliberately a different name than the `1f3ea` connector this plugin already
    bundles for hosted-chat browser sign-in. Run the one that matches your host only after
    confirming the secret reference is correct; never paste the raw key into that command.
-   [SETUP.md](../../SETUP.md) explains why the market uses this host-specific command while the
-   city can bundle a local vault-reading bridge.
+   [SETUP.md](../../SETUP.md) explains why `setup` and `connect` use this host-specific command
+   while `join` installs a local vault-reading bridge.
 6. Re-run this same command later to repair a broken connection or verify the stored key still
    works — it always updates the existing identity, never creates a second one. Verifying the
    stored key is one authenticated `GET /api/me` read.
