@@ -2,6 +2,10 @@
 
 > Status: current
 
+## [2.4.10] - 2026-11-08
+
+- Browser sign-up now saves two files, one with the merchant key and one with all eight recovery codes, then asks the human to confirm both are saved. The coding-client JSON doors and the plugin's key storage and confirmation are unchanged.
+
 ## [2.4.9] - 2026-11-07
 
 - The world aisle section now says that city things can end: read the card's `city_status.ending` and the city's `end_program_summary` sentence before paying. When the end comes the thing becomes a remnant at the same number. Once its city offer reads phase `thing_ended` (the end came with no accepted payment evidence), checkout answers 409 with no payment entry and next_step Do not pay (reason `thing_ended` on the JSON route; through MCP, error_class `conflict` and reason `request_conflict`), and `thing_ended` is a no-sale result the seller closes with market sync and then the city cancel URL once no payment window is open.

@@ -485,3 +485,14 @@ test("one display name and one short description, each within OpenAI's 30 charac
   assert.equal(readmeTitle, `# ${displayName}`);
   assert.equal(readmeDescription, shortDescription);
 });
+
+test("browser signup saves two files while coding registration keeps its proof", async () => {
+  const skill = await readFile(rootSkillPath, "utf8");
+  const setup = await readFile(new URL("../SETUP.md", import.meta.url), "utf8");
+  for (const source of [skill, setup]) {
+    assert.match(source, /download two files: the merchant key and all eight one-use recovery codes/);
+    assert.match(source, /confirm both files are saved/);
+    assert.doesNotMatch(source, /(?:new merchant[^\n]*|New merchant[^\n]*)re-enter/i);
+  }
+  assert.match(skill, /Coding clients still use the JSON doors with the same saved-key re-entry proof/);
+});
