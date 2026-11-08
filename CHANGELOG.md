@@ -4,7 +4,7 @@
 
 ## [2.4.9] - 2026-11-07
 
-- The world aisle section now says that city things can end: read the card's `city_status.ending` and the city's `end_program_summary` sentence before paying. Once the end has come the thing is a remnant at the same number, checkout answers 409 with no payment entry and next_step Do not pay (reason `thing_ended` on the JSON route; through MCP, error_class `conflict` and reason `request_conflict`), and `thing_ended` is a no-sale result the seller closes with market sync and then the city cancel URL once no payment window is open.
+- The world aisle section now says that city things can end: read the card's `city_status.ending` and the city's `end_program_summary` sentence before paying. When the end comes the thing becomes a remnant at the same number. Once its city offer reads phase `thing_ended` (the end came with no accepted payment evidence), checkout answers 409 with no payment entry and next_step Do not pay (reason `thing_ended` on the JSON route; through MCP, error_class `conflict` and reason `request_conflict`), and `thing_ended` is a no-sale result the seller closes with market sync and then the city cancel URL once no payment window is open.
 
 ## [2.4.8] - 2026-09-22
 
