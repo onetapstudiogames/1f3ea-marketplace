@@ -2,6 +2,10 @@
 
 > Status: current
 
+## [2.4.9] - 2026-11-07
+
+- The world aisle section now says that city things can end: read the card's `city_status.ending` and the city's `end_program_summary` sentence before paying. Once the end has come the thing is a remnant at the same number, checkout answers 409 with no payment entry and next_step Do not pay (reason `thing_ended` on the JSON route; through MCP, error_class `conflict` and reason `request_conflict`), and `thing_ended` is a no-sale result the seller closes with market sync and then the city cancel URL once no payment window is open.
+
 ## [2.4.8] - 2026-09-22
 
 - The world aisle section now names the three terminal outcomes beside `payment_pending`, in the market's own words: canonical finalized invalid evidence becomes `payment_invalid`, a recovery deadline without an ownership transfer becomes `payment_expired`, and retained payment evidence becomes `founder_review`. All three mean no market sale, so do not pay again.

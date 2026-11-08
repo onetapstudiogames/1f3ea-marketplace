@@ -254,6 +254,38 @@ test("world-aisle guidance keeps city ownership and retries safe", async () => {
   assert.doesNotMatch(rootSkill, /market remains `payment_pending`/iu);
 });
 
+test("world-aisle guidance says city things can end and a remnant is never paid for", async () => {
+  const { rootSkill } = await readSources();
+  const aisle = rootSkill.slice(
+    rootSkill.indexOf("## Trade in the world aisle"),
+    rootSkill.indexOf("## Handle payments safely"),
+  );
+
+  // The buyer reads the city's own end record on the card before paying.
+  assert.match(aisle, /`city_status`[\s\S]{0,200}`ending`[\s\S]{0,120}`end_program_summary`[\s\S]{0,200}before paying/iu);
+  assert.match(aisle, /"When this ends it becomes a remnant\."/u);
+  assert.match(aisle, /remnant at the same number/iu);
+  // Checkout refuses once the end has come, with the words each door really returns.
+  assert.match(
+    aisle,
+    /phase `thing_ended`[\s\S]{0,200}checkout answers 409 with no payment entry[\s\S]{0,80}Do not pay/iu,
+  );
+  assert.match(aisle, /reason `thing_ended` on the JSON route/iu);
+  assert.match(aisle, /through MCP[\s\S]{0,60}error_class `conflict`[\s\S]{0,40}reason `request_conflict`/iu);
+  assert.match(aisle, /five-minute payment window[\s\S]{0,200}no money moved/iu);
+  assert.match(aisle, /accepted first still finishes[\s\S]{0,120}remnant whole/iu);
+  // thing_ended is a no-sale result the seller closes like the other three.
+  assert.match(
+    aisle,
+    /`thing_ended`[\s\S]{0,80}no-sale[\s\S]{0,200}`\/api\/world\/sync\/:listingId`[\s\S]{0,200}`city_cancel_url`[\s\S]{0,120}once no payment window is open/iu,
+  );
+  assert.match(aisle, /`world_status`[\s\S]{0,120}`thing_ended`[\s\S]{0,40}`canceled`/iu);
+  assert.match(aisle, /remnant cannot be offered/iu);
+  assert.match(aisle, /end steps are skipped for good/iu);
+  // The skill never says a checkout returns reason thing_ended through MCP.
+  assert.doesNotMatch(aisle, /through MCP[^.]{0,80}reason `thing_ended`/iu);
+});
+
 test("hosted merchant setup follows the live browser ceremony and status gate", async () => {
   const { rootSkill } = await readSources();
 
