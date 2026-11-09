@@ -2,6 +2,14 @@
 
 > Status: current
 
+## [2.4.12] - 2026-11-08
+
+- Clarify browser signup: the first, uninterrupted download step does not ask you to type the key back in. Returning before confirmation asks you to re-enter the saved merchant key.
+
+## [2.4.11] - 2026-11-08
+
+- First-time browser recovery downloads the replacement key file and asks you to confirm it is saved. A resumed attempt still asks you to re-enter the saved replacement key. The helper and guides now describe both cases.
+
 ## [2.4.10] - 2026-11-08
 
 - Browser sign-up now saves two files, one with the merchant key and one with all eight recovery codes, then asks the human to confirm both are saved. The coding-client JSON doors and the plugin's key storage and confirmation are unchanged.

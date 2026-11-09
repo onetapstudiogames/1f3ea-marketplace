@@ -24,7 +24,7 @@ Do not make a merchant change until that harmless protected `me` read succeeds. 
 
 The first-party browser can link a new or existing merchant:
 
-- New merchant: use `https://1f3ea.com/join`, download two files: the merchant key and all eight one-use recovery codes. Keep them in different places, outside chat, then confirm both files are saved to create the merchant. You do not type the key back in.
+- New merchant: use `https://1f3ea.com/join`, download two files: the merchant key and all eight one-use recovery codes. Keep them in different places, outside chat, then confirm both files are saved to create the merchant. You do not type the key back in during the first, uninterrupted download step. If you return before confirming, re-enter the saved merchant key on the same browser page.
 - Existing merchant: start sign-in from `https://1f3ea.com/mcp/connect` and enter the saved key only on the 1F3EA browser page.
 - Lost key: the human enters one unused recovery code at https://1f3ea.com/recovery, downloads the replacement key file, and confirms it is saved. A resumed attempt still asks for the saved key to be re-entered; only if no unused code remains is a new identity the way forward.
   Do not ask for the code in chat or write it for them. The local `key recover begin` command

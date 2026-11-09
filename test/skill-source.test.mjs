@@ -492,7 +492,7 @@ test("browser signup saves two files while coding registration keeps its proof",
   for (const source of [skill, setup]) {
     assert.match(source, /download two files: the merchant key and all eight one-use recovery codes/);
     assert.match(source, /confirm both files are saved/);
-    assert.doesNotMatch(source, /(?:new merchant[^\n]*|New merchant[^\n]*)re-enter/i);
+    assert.match(source, /You do not type the key back in during the first, uninterrupted download step\. If you return before confirming, re-enter the saved merchant key on the same browser page\./);
   }
   assert.match(skill, /Coding clients still use the JSON doors with the same saved-key re-entry proof/);
 });
