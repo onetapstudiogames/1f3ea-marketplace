@@ -21,7 +21,7 @@ import { LOST_KEY_GUIDANCE, UNREADABLE_ENTRY_GUIDANCE } from '../scripts/lib/rec
 // already carry that condition in their own list label ("Lost key: ...",
 // "**Lost key recovery** -- ...") and repeating it there stutters, so the
 // invariant every copy shares is this body.
-const LOST_KEY_BODY = 'the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; only if no unused code remains is a new identity the way forward.'
+const LOST_KEY_BODY = 'the human enters one unused recovery code at https://1f3ea.com/recovery, downloads the replacement key file, and confirms it is saved. A resumed attempt still asks for the saved key to be re-entered; only if no unused code remains is a new identity the way forward.'
 
 // Guides that state the condition themselves and so carry the body alone.
 const labelledGuides = ['SETUP.md', 'skills/key/SKILL.md', 'skills-codex/key/SKILL.md']
