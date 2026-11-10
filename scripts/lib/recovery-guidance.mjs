@@ -12,7 +12,6 @@ const UNREADABLE_ENTRY_GUIDANCE =
 
 // Case B: the key is known to be lost.
 const LOST_KEY_GUIDANCE =
-  'If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the ' +
-  'replacement key, and re-enters it there; only if no unused code remains is a new identity the way forward.'
+  'If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, downloads the replacement key file, and confirms it is saved. A resumed attempt still asks for the saved key to be re-entered; only if no unused code remains is a new identity the way forward.'
 
 export { LOST_KEY_GUIDANCE, UNREADABLE_ENTRY_GUIDANCE }

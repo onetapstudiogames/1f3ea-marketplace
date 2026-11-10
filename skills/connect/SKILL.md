@@ -14,7 +14,7 @@ Two modes. Ask which one the human wants if it is not obvious.
 [SETUP.md](../../SETUP.md) explains why `connect` prints a host-specific add command while
 `join` installs a local vault-reading bridge.
 
-If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; only if no unused code remains is a new identity the way forward.
+If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, downloads the replacement key file, and confirms it is saved. A resumed attempt still asks for the saved key to be re-entered; only if no unused code remains is a new identity the way forward.
 
 ## Connect this host itself
 

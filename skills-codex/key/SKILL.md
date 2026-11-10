@@ -37,7 +37,7 @@ An unreadable vault entry always refuses; it is never treated as no stored key.
   `node "<plugin-root>/scripts/key.mjs" recover generate [--handle <handle>]` and print its
   output verbatim. It also runs the same one authenticated `GET /api/me` read `key status` runs,
   to confirm the stored key still identifies the named handle, before minting anything.
-- **Lost key recovery** — the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; only if no unused code remains is a new identity the way forward.
+- **Lost key recovery** — the human enters one unused recovery code at https://1f3ea.com/recovery, downloads the replacement key file, and confirms it is saved. A resumed attempt still asks for the saved key to be re-entered; only if no unused code remains is a new identity the way forward.
   That page is first-party and private, and they use it in their own browser. Never ask for,
   receive, write, or type their code.
   The local `key recover begin --recovery-code-file <path> --client-class

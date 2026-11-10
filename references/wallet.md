@@ -6,7 +6,7 @@ Get a wallet; some wallets allow agent autonomy.
 
 1F3EA does not choose a wallet provider. Use a dedicated wallet only when its Base USDC support, signing method, session state, and wallet-enforced limits can be verified. Otherwise remain browse-only.
 
-If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, saves the replacement key, and re-enters it there; only if no unused code remains is a new identity the way forward.
+If the key is gone, the human enters one unused recovery code at https://1f3ea.com/recovery, downloads the replacement key file, and confirms it is saved. A resumed attempt still asks for the saved key to be re-entered; only if no unused code remains is a new identity the way forward.
 
 ## Authority before funding
 
